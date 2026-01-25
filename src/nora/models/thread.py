@@ -1,7 +1,7 @@
 """Thread model for conversation management."""
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from nora.models.message import Message
@@ -23,6 +23,7 @@ class Thread(BaseModel):
     created: str = Field(default="", description="ISO timestamp of creation")
     updated: str = Field(default="", description="ISO timestamp of last update")
     messages: list[Message] = Field(default_factory=list, description="Conversation messages")
+    raw_messages: list[dict[str, Any]] = Field(default_factory=list, description="Raw agent messages with full toolUse/toolResult structure")
     mode: Mode = Field(default="vibe", description="Current conversation mode")
     plan_id: Optional[str] = Field(default=None, description="Associated plan ID for act mode")
 
@@ -52,9 +53,14 @@ class Thread(BaseModel):
         """
         Convert thread messages to agent-compatible format.
         
+        Returns raw_messages if available (preserves toolUse/toolResult structure),
+        otherwise falls back to simplified text-only format.
+        
         Returns:
             List of message dicts for Strands agent initialization.
         """
+        if self.raw_messages:
+            return self.raw_messages
         return [
             msg.to_agent_format() 
             for msg in self.messages 

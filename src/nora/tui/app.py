@@ -168,7 +168,7 @@ class ChatApp(App):
         self._plugin_service.load_all(startup_only=True)
 
     def _init_agent(self) -> None:
-        messages = [{"role": m.role, "content": [{"text": m.content}]} for m in self.thread.messages if m.role != "tool_call" and m.content]
+        messages = self.thread.to_agent_messages()
         self.agent = self._agent_service.create_agent(
             messages, 
             self.profile, 
@@ -567,6 +567,8 @@ class ChatApp(App):
                 chat.mount(ChatMessage("assistant", text))
                 chat.scroll_end()
         
+        # Sync raw agent messages to preserve toolUse/toolResult structure for session restore
+        self.thread.raw_messages = list(self.agent.messages)
         self._thread_service.save(self.thread)
         self._set_processing(False)
 
