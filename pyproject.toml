@@ -1,0 +1,25 @@
+[project]
+name = "nora"
+version = "0.1.0"
+description = "Custom AI CLI tool using Strands Agents and Claude Sonnet 4.5"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "docstring-parser>=0.17.0",
+    "pathspec>=0.12.0",
+    "pyyaml>=6.0.0",
+    "rapidfuzz>=3.5.0",
+    "rich>=14.2.0",
+    "strands-agents>=1.21.0",
+    "textual>=3.0.0",
+    "textual-keys>=1.2.0",
+    "thefuzz>=0.22.0",
+    "typer>=0.21.1",
+]
+
+[project.scripts]
+nora = "nora.cli.commands:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
