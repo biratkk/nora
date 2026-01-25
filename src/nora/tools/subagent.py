@@ -3,6 +3,8 @@
 from strands import tool
 from strands.types.tools import ToolContext
 
+from nora.services.agent_service import AgentService
+
 
 @tool(name="Subagent", context=True)
 def run_subagent(tool_context: ToolContext, prompt: str) -> str:
@@ -11,9 +13,6 @@ def run_subagent(tool_context: ToolContext, prompt: str) -> str:
     Args:
         prompt: Concise, clear prompt explaining what the subagent should find or do
     """
-    from nora.core.agent import create_agent
-    from nora.core.hooks import CancellationHook
-    
     # Access context via invocation_state (set when agent is invoked)
     invocation_state = tool_context.invocation_state
     callback = invocation_state.get("subagent_callback")
@@ -23,13 +22,12 @@ def run_subagent(tool_context: ToolContext, prompt: str) -> str:
     # Get tool_use_id from context to route callbacks correctly
     tool_use_id = tool_context.tool_use.get("toolUseId")
     
-    # Create a new cancel hook for the subagent that shares state with parent
-    subagent_hooks = []
-    if cancel_hook:
-        subagent_hooks.append(cancel_hook)  # Share the same hook instance
-    
-    # Use subagent mode for concise output
-    agent = create_agent([], profile=profile, mode="subagent", hooks=subagent_hooks)
+    # Use agent service to create subagent
+    agent_service = AgentService()
+    agent = agent_service.create_subagent(
+        profile=profile,
+        cancel_hook=cancel_hook,
+    )
     
     all_content = []
     

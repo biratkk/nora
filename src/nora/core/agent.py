@@ -1,4 +1,4 @@
-"""Agent initialization."""
+"""Agent initialization - backward compatibility shim."""
 
 from typing import Optional
 import boto3

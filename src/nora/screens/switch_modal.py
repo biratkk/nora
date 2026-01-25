@@ -1,6 +1,7 @@
 """Switch thread modal with keyboard navigation and fuzzy search."""
 
 from datetime import datetime
+from typing import List
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -27,17 +28,37 @@ class ThreadItem(Static):
     """
     
     def __init__(self, thread: Thread) -> None:
+        """
+        Initialize the thread item.
+        
+        Args:
+            thread: The thread to display.
+        """
         self.thread = thread
-        date_str = datetime.fromisoformat(thread.created).strftime("%b %d, %Y %H:%M") if thread.created else "Unknown"
+        date_str = self._format_date(thread.created)
         name = escape(thread.name or thread.id)
         super().__init__(f"[dim]{date_str}:[/dim] {name}")
     
+    def _format_date(self, created: str) -> str:
+        """Format the creation date."""
+        if not created:
+            return "Unknown"
+        try:
+            return datetime.fromisoformat(created).strftime("%b %d, %Y %H:%M")
+        except ValueError:
+            return created[:16]
+    
     def on_click(self) -> None:
+        """Handle click to select thread."""
         self.screen.dismiss(self.thread)
 
 
 class SwitchModal(ModalScreen[Thread | None]):
-    """Modal for switching between threads with fuzzy search."""
+    """
+    Modal for switching between conversation threads.
+    
+    Supports fuzzy search across thread names and content.
+    """
     
     DEFAULT_CSS = """
     SwitchModal { align: center middle; }
@@ -61,21 +82,28 @@ class SwitchModal(ModalScreen[Thread | None]):
     ]
     
     def __init__(self) -> None:
+        """Initialize the switch modal."""
         super().__init__()
         self._thread_service = ThreadService()
-        self.threads: list[Thread] = []
-        self.filtered_threads: list[Thread] = []
+        self.threads: List[Thread] = []
+        self.filtered_threads: List[Thread] = []
         self.selected_index = 0
         self.search_query = ""
     
     def compose(self) -> ComposeResult:
+        """Compose the modal layout."""
         with Container():
             with Container(classes="modal-content"):
                 yield Static("Switch Thread", classes="title")
-                yield Input(placeholder="Type to filter...", classes="search-input", id="thread-search")
+                yield Input(
+                    placeholder="Type to filter...", 
+                    classes="search-input", 
+                    id="thread-search"
+                )
                 with VerticalScroll(id="thread-list"):
                     self.threads = self._thread_service.list_all()
                     self.filtered_threads = self.threads.copy()
+                    
                     if not self.threads:
                         yield Static("[dim]No threads[/dim]")
                     else:
@@ -84,13 +112,15 @@ class SwitchModal(ModalScreen[Thread | None]):
                             if i == 0:
                                 item.add_class("selected")
                             yield item
-            yield Static("Type to search  ↑/↓ navigate  Enter select  Esc close", classes="modal-status")
+            yield Static(
+                "Type to search  ↑/↓ navigate  Enter select  Esc close", 
+                classes="modal-status"
+            )
 
     def _get_thread_search_text(self, thread: Thread) -> str:
-        """Get searchable text for a thread (name + id + all message content)."""
+        """Get searchable text for a thread."""
         parts = [thread.name or '', thread.id]
         
-        # Include all message content from the thread
         for msg in thread.messages:
             if msg.content:
                 parts.append(msg.content)
@@ -102,7 +132,7 @@ class SwitchModal(ModalScreen[Thread | None]):
         return ' '.join(parts)
 
     def _filter_threads(self) -> None:
-        """Filter threads based on current search query."""
+        """Filter threads based on search query."""
         self.filtered_threads = fuzzy_filter(
             self.search_query,
             self.threads,
@@ -111,12 +141,15 @@ class SwitchModal(ModalScreen[Thread | None]):
         self.selected_index = 0
 
     async def _refresh_thread_list(self) -> None:
-        """Re-render the thread list after filtering."""
+        """Re-render the thread list."""
         scroll = self.query_one("#thread-list", VerticalScroll)
         await scroll.remove_children()
         
         if not self.filtered_threads:
-            await scroll.mount(Static("No matches\n[dim]Press Enter to clear search[/dim]", classes="no-matches"))
+            await scroll.mount(Static(
+                "No matches\n[dim]Press Enter to clear search[/dim]", 
+                classes="no-matches"
+            ))
         else:
             for i, thread in enumerate(self.filtered_threads):
                 item = ThreadItem(thread)
@@ -138,7 +171,7 @@ class SwitchModal(ModalScreen[Thread | None]):
                 item.remove_class("selected")
 
     def on_mount(self) -> None:
-        """Focus search input when modal opens."""
+        """Focus search input on mount."""
         self.query_one("#thread-search", Input).focus()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
@@ -162,15 +195,15 @@ class SwitchModal(ModalScreen[Thread | None]):
             event.prevent_default()
         elif event.key == "enter":
             if not self.filtered_threads:
-                # Clear search when no matches
                 search_input = self.query_one("#thread-search", Input)
                 search_input.value = ""
                 self.search_query = ""
                 self._filter_threads()
                 await self._refresh_thread_list()
-            elif self.filtered_threads and 0 <= self.selected_index < len(self.filtered_threads):
+            elif 0 <= self.selected_index < len(self.filtered_threads):
                 self.dismiss(self.filtered_threads[self.selected_index])
             event.prevent_default()
     
     def action_close(self) -> None:
+        """Close without selection."""
         self.dismiss(None)

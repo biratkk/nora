@@ -1,19 +1,57 @@
 """Plugin creation modal."""
 
 import asyncio
+from typing import List, Optional, Tuple
+
 from textual import events, work
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.widgets import Static, Input, Checkbox, Button, TextArea
 from textual.binding import Binding
 
-from nora.tui.widgets.modal import BaseModal
-from nora.models.plugin import Plugin, validate_plugin_name
+from nora.widgets.modal import BaseModal
+from nora.models.plugin import Plugin
 from nora.services.plugin_service import PluginService
+from nora.services.agent_service import AgentService
 
 
-async def generate_plugin_metadata(name: str, instructions: str, profile: str | None = None) -> tuple[str, list[str]]:
-    """Use a Strands agent to generate description and keywords for a plugin."""
+def validate_plugin_name(name: str) -> Tuple[bool, str]:
+    """
+    Validate plugin name format.
+    
+    Args:
+        name: Plugin name to validate.
+        
+    Returns:
+        Tuple of (is_valid, error_message).
+    """
+    if not name:
+        return False, "Name cannot be empty"
+    if " " in name:
+        return False, "Name cannot contain spaces"
+    if "/" in name:
+        return False, "Name cannot contain /"
+    if "\\" in name:
+        return False, "Name cannot contain \\"
+    return True, ""
+
+
+async def generate_plugin_metadata(
+    name: str, 
+    instructions: str, 
+    profile: Optional[str] = None
+) -> Tuple[str, List[str]]:
+    """
+    Use a Strands agent to generate description and keywords for a plugin.
+    
+    Args:
+        name: Plugin name.
+        instructions: Plugin instructions.
+        profile: AWS profile name.
+        
+    Returns:
+        Tuple of (description, keywords).
+    """
     import boto3
     from strands import Agent
     from strands.models import BedrockModel
@@ -36,14 +74,17 @@ Respond in this exact format (no extra text):
 DESCRIPTION: <one sentence description>
 KEYWORDS: <comma-separated keywords>"""
 
-    agent = Agent(model=model, tools=[], system_prompt="You are a helpful assistant that generates metadata for plugins. Respond only in the exact format requested.")
+    agent = Agent(
+        model=model, 
+        tools=[], 
+        system_prompt="You are a helpful assistant that generates metadata for plugins. Respond only in the exact format requested."
+    )
     
     result = await asyncio.to_thread(agent, prompt)
     response = str(result)
     
-    # Parse response
     description = ""
-    keywords = []
+    keywords: List[str] = []
     
     for line in response.strip().split("\n"):
         if line.startswith("DESCRIPTION:"):
@@ -56,7 +97,12 @@ KEYWORDS: <comma-separated keywords>"""
 
 
 class AddPluginModal(BaseModal):
-    """Multi-step modal for creating plugins."""
+    """
+    Multi-step modal for creating plugins.
+    
+    Guides user through name, instructions, and advanced options.
+    Auto-generates description and keywords using AI.
+    """
     
     STEPS = ["name", "instructions", "advanced"]
     
@@ -76,7 +122,13 @@ class AddPluginModal(BaseModal):
         Binding("escape", "cancel", "Cancel"),
     ]
     
-    def __init__(self, profile: str | None = None):
+    def __init__(self, profile: Optional[str] = None) -> None:
+        """
+        Initialize the plugin creation modal.
+        
+        Args:
+            profile: AWS profile for AI metadata generation.
+        """
         super().__init__()
         self.current_step = 0
         self.profile = profile
@@ -89,6 +141,7 @@ class AddPluginModal(BaseModal):
         self._plugin_service = PluginService()
     
     def compose(self) -> ComposeResult:
+        """Compose the modal layout."""
         with Vertical(id="modal-container"):
             yield Static(self._get_title(), id="modal-title")
             yield Static("", id="error-message")
@@ -99,16 +152,18 @@ class AddPluginModal(BaseModal):
                 yield Static("[dim]Backspace: Back | Esc: Cancel[/dim]")
     
     def _get_title(self) -> str:
+        """Get the current step title."""
         step = self.STEPS[self.current_step]
         step_num = self.current_step + 1
         total = len(self.STEPS)
         return f"[bold]Add Plugin[/bold] - Step {step_num}/{total}: {self.STEP_TITLES[step]}"
     
     def _get_hint(self) -> str:
-        step = self.STEPS[self.current_step]
-        return self.STEP_HINTS[step]
+        """Get the current step hint."""
+        return self.STEP_HINTS[self.STEPS[self.current_step]]
     
     def _compose_step_content(self) -> ComposeResult:
+        """Compose content for the current step."""
         step = self.STEPS[self.current_step]
         
         if step == "advanced":
@@ -116,10 +171,7 @@ class AddPluginModal(BaseModal):
             yield Static("")
             yield Button("Create Plugin", id="submit-btn", variant="primary")
         elif step == "instructions":
-            yield TextArea(
-                self.data["instructions"],
-                id="input_instructions"
-            )
+            yield TextArea(self.data["instructions"], id="input_instructions")
         else:
             yield Input(
                 placeholder=self.STEP_HINTS[step],
@@ -128,20 +180,16 @@ class AddPluginModal(BaseModal):
             )
     
     def _refresh_content(self) -> None:
-        """Refresh the modal content for current step."""
-        # Update title
+        """Refresh the modal for current step."""
         title = self.query_one("#modal-title", Static)
         title.update(self._get_title())
         
-        # Update hint
         hint = self.query_one("#step-hint", Static)
         hint.update(self._get_hint())
         
-        # Clear error
         error = self.query_one("#error-message", Static)
         error.update("")
         
-        # Rebuild step content
         content = self.query_one("#step-content", Vertical)
         content.remove_children()
         
@@ -184,6 +232,16 @@ class AddPluginModal(BaseModal):
             except Exception:
                 pass
     
+    def _show_error(self, message: str) -> None:
+        """Display an error message."""
+        error = self.query_one("#error-message", Static)
+        error.update(f"[red]{message}[/red]")
+    
+    def _show_status(self, message: str) -> None:
+        """Display a status message."""
+        error = self.query_one("#error-message", Static)
+        error.update(f"[cyan]{message}[/cyan]")
+    
     async def on_key(self, event: events.Key) -> None:
         """Handle key events for navigation."""
         if self._generating:
@@ -199,13 +257,11 @@ class AddPluginModal(BaseModal):
         
         if step == "advanced":
             if event.key == "space":
-                # Toggle checkbox
                 checkbox = self.query_one("#load_on_startup", Checkbox)
                 checkbox.value = not checkbox.value
                 event.prevent_default()
                 return
             elif event.key == "enter":
-                # Submit
                 self._submit()
                 event.prevent_default()
                 return
@@ -214,13 +270,11 @@ class AddPluginModal(BaseModal):
                 event.prevent_default()
                 return
         elif step == "instructions":
-            # Ctrl+D to continue to next step
             if event.key == "ctrl+d":
                 self._next_step()
                 event.prevent_default()
                 return
             elif event.key == "backspace":
-                # Only go back if text area is empty
                 try:
                     text_area = self.query_one("#input_instructions", TextArea)
                     if text_area.text == "":
@@ -235,7 +289,6 @@ class AddPluginModal(BaseModal):
                 return
             
             if event.key == "backspace":
-                # Check if current input is empty
                 try:
                     input_widget = self.query_one(f"#input_{step}", Input)
                     if input_widget.value == "":
@@ -249,21 +302,10 @@ class AddPluginModal(BaseModal):
         if event.button.id == "submit-btn" and not self._generating:
             self._submit()
     
-    def _show_error(self, message: str) -> None:
-        """Display an error message."""
-        error = self.query_one("#error-message", Static)
-        error.update(f"[red]{message}[/red]")
-    
-    def _show_status(self, message: str) -> None:
-        """Display a status message."""
-        error = self.query_one("#error-message", Static)
-        error.update(f"[cyan]{message}[/cyan]")
-    
     def _next_step(self) -> None:
         """Move to the next step."""
         step = self.STEPS[self.current_step]
         
-        # Get current value
         if step == "instructions":
             try:
                 text_area = self.query_one("#input_instructions", TextArea)
@@ -277,7 +319,6 @@ class AddPluginModal(BaseModal):
             except Exception:
                 value = ""
         
-        # Validate
         if step == "name":
             if not value:
                 self._show_error("Name is required")
@@ -291,10 +332,8 @@ class AddPluginModal(BaseModal):
                 self._show_error("Instructions are required")
                 return
         
-        # Save value
         self.data[step] = value
         
-        # Move to next step
         if self.current_step < len(self.STEPS) - 1:
             self.current_step += 1
             self._refresh_content()
@@ -302,7 +341,6 @@ class AddPluginModal(BaseModal):
     def _prev_step(self) -> None:
         """Move to the previous step."""
         if self.current_step > 0:
-            # Save current value before going back
             step = self.STEPS[self.current_step]
             if step == "advanced":
                 try:
@@ -331,18 +369,15 @@ class AddPluginModal(BaseModal):
         if self._generating:
             return
             
-        # Get checkbox value
         try:
             checkbox = self.query_one("#load_on_startup", Checkbox)
             self.data["load_on_startup"] = checkbox.value
         except Exception:
             pass
         
-        # Start async generation
         self._generating = True
         self._show_status("Generating description and keywords...")
         
-        # Disable button
         try:
             btn = self.query_one("#submit-btn", Button)
             btn.disabled = True
@@ -356,14 +391,12 @@ class AddPluginModal(BaseModal):
     async def _do_submit(self) -> None:
         """Async submit with metadata generation."""
         try:
-            # Generate description and keywords
             description, keywords = await generate_plugin_metadata(
                 self.data["name"],
                 self.data["instructions"],
                 self.profile
             )
             
-            # Create plugin
             plugin = Plugin(
                 name=self.data["name"],
                 description=description,
@@ -372,7 +405,6 @@ class AddPluginModal(BaseModal):
                 load_on_startup=self.data["load_on_startup"]
             )
             
-            # Save plugin
             path = self._plugin_service.save(plugin)
             self.dismiss(path)
             
@@ -380,7 +412,6 @@ class AddPluginModal(BaseModal):
             self._generating = False
             self._show_error(f"Failed to create plugin: {e}")
             
-            # Re-enable button
             try:
                 btn = self.query_one("#submit-btn", Button)
                 btn.disabled = False

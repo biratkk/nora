@@ -1,6 +1,7 @@
 """Main TUI application."""
 
 import asyncio
+from pathlib import Path
 from typing import Optional
 
 from textual.app import App, ComposeResult
@@ -11,16 +12,16 @@ from thefuzz import fuzz
 
 from nora.models import Thread, Message
 from nora.models.thread import Mode
-from nora.storage import save_thread
-from nora.storage.plugins import load_plugins
-from nora.storage.plans import save_plan
-from nora.core import create_agent, get_model_name, MODEL_ID, CancellationHook
-from nora.tui.widgets import ChatMessage, ToolCallBlock, SubagentBlock, AutocompleteWidget, LoadingWidget, MarkdownInput, ToolConfirmModal, ModelSelectorModal, DiffModal, SwitchModal, AddPluginModal
-from nora.storage.plugins import load_plugins
-from nora.tui import events
+from nora.config.constants import DEFAULT_MODEL_ID, MODE_CYCLE
+from nora.services.settings_service import SettingsService
+from nora.services.thread_service import ThreadService
+from nora.services.plugin_service import PluginService
+from nora.services.plan_service import PlanService
+from nora.services.agent_service import AgentService, CancellationHook
+from nora.widgets import ChatMessage, ToolCallBlock, SubagentBlock, AutocompleteWidget, LoadingWidget, MarkdownInput
+from nora.screens import ToolConfirmModal, ModelSelectorModal, DiffModal, SwitchModal, AddPluginModal
 
 MODE_COLORS = {"vibe": "cyan", "plan": "yellow", "act": "green"}
-MODE_CYCLE: list[Mode] = ["vibe", "plan", "act"]
 
 
 class ChatApp(App):
@@ -65,13 +66,19 @@ class ChatApp(App):
         super().__init__()
         self.thread = thread
         self.profile = profile
+        
+        # Services
+        self._thread_service = ThreadService()
+        self._plugin_service = PluginService()
+        self._plan_service = PlanService()
+        self._agent_service = AgentService()
+        
+        # State
         self.agent = None
         self._ac_trigger: Optional[str] = None
         self._ac_pos: int = 0
-        self._pending_tool: Optional[dict] = None
         self._ctrl_c_pressed = False
-        self._current_model = MODEL_ID
-        self._plugins = []
+        self._current_model = DEFAULT_MODEL_ID
         self._processing = False
         self._current_worker = None
         self._cancel_hook = CancellationHook()
@@ -87,21 +94,18 @@ class ChatApp(App):
                 yield Static("", id="cancel-hint")
         with Horizontal(id="status-bar"):
             yield Static(f" {self.thread.mode.upper()} ", id="mode-indicator", classes=f"mode-{self.thread.mode}")
-            yield Static(f" {get_model_name()} ", id="model-name")
+            yield Static(f" {self._agent_service.get_model_name()} ", id="model-name")
             yield Static("", id="status-spacer")
             yield Static("@file  /cmd  Esc quit", id="status-keys")
 
     def action_ctrl_c(self) -> None:
         if self._processing and self._current_worker:
-            # Signal cancellation to the agent via hook
             self._cancel_hook.cancel()
             self._current_worker.cancel()
             self._set_processing(False)
-            # Clean up loading widget if present
             chat_container = self.query_one("#chat-container", Container)
             for loading in chat_container.query(LoadingWidget):
                 loading.remove()
-            # Agent retains its state (files read, context, etc.)
             return
         
         if self._ctrl_c_pressed:
@@ -118,7 +122,7 @@ class ChatApp(App):
         inp = self.query_one("#input", MarkdownInput)
         hint = self.query_one("#cancel-hint", Static)
         if processing:
-            self._cancel_hook.reset()  # Reset cancellation flag
+            self._cancel_hook.reset()
             inp.disabled = True
             inp.add_class("disabled")
             hint.update("[dim]Ctrl+C to cancel[/dim]")
@@ -132,7 +136,6 @@ class ChatApp(App):
         self._subagent_expanded = not self._subagent_expanded
         chat = self.query_one("#chat", VerticalScroll)
         for block in chat.query(SubagentBlock):
-            # Set collapsed to opposite of expanded
             if block.collapsed == self._subagent_expanded:
                 block.toggle_collapsed()
 
@@ -157,17 +160,23 @@ class ChatApp(App):
 
     def _load_plugins(self) -> None:
         """Load plugins from $CWD/.nora/plugins/."""
-        self._plugins = load_plugins(startup_only=True)
+        self._plugin_service.load_all(startup_only=True)
 
     def _init_agent(self) -> None:
         messages = [{"role": m.role, "content": [{"text": m.content}]} for m in self.thread.messages if m.role != "tool_call" and m.content]
-        self.agent = create_agent(messages, self.profile, self.thread.mode, self._current_model, hooks=[self._cancel_hook])
+        self.agent = self._agent_service.create_agent(
+            messages, 
+            self.profile, 
+            self.thread.mode, 
+            self._current_model, 
+            hooks=[self._cancel_hook]
+        )
 
     def _on_model_selected(self, model_id: str | None) -> None:
         if model_id:
             self._current_model = model_id
             self._init_agent()
-            self.query_one("#model-name", Static).update(f" {get_model_name(model_id)} ")
+            self.query_one("#model-name", Static).update(f" {self._agent_service.get_model_name(model_id)} ")
 
     def _on_thread_selected(self, thread: Thread | None) -> None:
         if thread is None:
@@ -175,7 +184,6 @@ class ChatApp(App):
         self.thread = thread
         chat = self.query_one("#chat", VerticalScroll)
         chat.remove_children()
-        # Reload messages from selected thread
         tool_block = None
         for msg in self.thread.messages:
             if msg.role == "tool_call":
@@ -196,7 +204,6 @@ class ChatApp(App):
             chat = self.query_one("#chat", VerticalScroll)
             chat.mount(Static(f"[green]✓[/green] Plugin created: {plugin_path.name}"))
             chat.scroll_end()
-            # Reload plugins
             self._load_plugins()
             self._init_agent()
 
@@ -214,32 +221,26 @@ class ChatApp(App):
         indicator.add_class(f"mode-{self.thread.mode}")
 
     def action_cycle_mode(self) -> None:
-        idx = MODE_CYCLE.index(self.thread.mode)
-        self.thread.mode = MODE_CYCLE[(idx + 1) % len(MODE_CYCLE)]
+        self._thread_service.cycle_mode(self.thread)
         self._update_status_bar()
         self._init_agent()
-        save_thread(self.thread)
+        self._thread_service.save(self.thread)
 
     def action_execute_plan(self) -> None:
         if self.thread.mode != "plan":
             return
-        # Get last assistant message as plan content
-        plan_content = ""
-        for msg in reversed(self.thread.messages):
-            if msg.role == "assistant" and msg.content:
-                plan_content = msg.content
-                break
+        plan_content = self._thread_service.get_last_assistant_message(self.thread)
         if not plan_content:
             return
-        plan = save_plan(self.thread.id, plan_content)
-        self.thread.plan_id = plan.id
-        self.thread.mode = "act"
+        plan = self._plan_service.save_and_link(self.thread, plan_content)
         self._update_status_bar()
         self._init_agent()
-        save_thread(self.thread)
-        # Send implementing message
+        self._thread_service.save(self.thread)
         self._set_processing(True)
-        self._current_worker = self.run_worker(self._send_message(f"Implementing Plan: {plan.id}-{plan.description}"), exclusive=True)
+        self._current_worker = self.run_worker(
+            self._send_message(self._plan_service.get_implementation_prompt(plan)), 
+            exclusive=True
+        )
 
     async def _send_message(self, text: str) -> None:
         chat = self.query_one("#chat", VerticalScroll)
@@ -247,6 +248,14 @@ class ChatApp(App):
         chat.scroll_end()
         self.thread.messages.append(Message(role="user", content=text))
         await self._fetch_response(text)
+
+    def _get_current_word(self, text: str, cursor: int) -> str:
+        text_to_cursor = text[:cursor]
+        last_space = text_to_cursor.rfind(" ")
+        return text_to_cursor[last_space + 1:]
+
+    def _get_word_start_pos(self, text: str, cursor: int) -> int:
+        return text[:cursor].rfind(" ") + 1
 
     def on_text_area_changed(self, event) -> None:
         inp = self.query_one("#input", MarkdownInput)
@@ -256,13 +265,19 @@ class ChatApp(App):
         text = inp.internal_value
         cursor = inp._cursor_to_internal(inp.cursor_location[1])
 
-        if events.try_cmd_autocomplete(text, ac):
+        # Command autocomplete
+        if text.startswith("/"):
+            ac.show(ac.get_command_matches(text))
             self._ac_trigger = "/"
             self._ac_pos = 0
             return
-        if events.try_file_autocomplete(text, cursor, ac):
+
+        # File autocomplete
+        word = self._get_current_word(text, cursor)
+        if word.startswith("@") and len(word) >= 2:
+            ac.show(ac.get_file_matches(word[1:]))
             self._ac_trigger = "@"
-            self._ac_pos = events.get_word_start_pos(text, cursor)
+            self._ac_pos = self._get_word_start_pos(text, cursor)
             return
 
         self._ac_trigger = None
@@ -298,28 +313,25 @@ class ChatApp(App):
         ac = self.query_one("#autocomplete", AutocompleteWidget)
 
         if self._ac_trigger == "/":
-            events.apply_cmd_selection(inp, value)
+            inp.set_internal(value, len(value))
+            inp.post_message(inp.Submitted(inp, value))
         elif self._ac_trigger == "@":
-            events.apply_file_selection(inp, value, self._ac_pos)
+            text = inp.internal_value
+            before = text[:self._ac_pos]
+            after_at = text[self._ac_pos + 1:]
+            space_idx = after_at.find(" ")
+            after = after_at[space_idx + 1:] if space_idx >= 0 else ""
+            filename = Path(value).name
+            link = f"[{filename}]({value})"
+            new_internal = before + link + " " + after
+            inp.set_internal(new_internal, len(before + link) + 1)
 
         ac.hide()
         self._ac_trigger = None
 
     def _match_plugins(self, text: str) -> list:
         """Use fuzzy matching to find plugins whose keywords match the text."""
-        matched_plugins = []
-        text_lower = text.lower()
-        
-        for plugin in self._plugins:
-            # Check each keyword against the text using fuzzy matching
-            for keyword in plugin.keywords:
-                # Partial ratio works well for finding keyword in longer text
-                ratio = fuzz.partial_ratio(keyword.lower(), text_lower)
-                if ratio >= 80:  # 80% similarity threshold
-                    matched_plugins.append(plugin)
-                    break  # Don't add same plugin multiple times
-        
-        return matched_plugins
+        return self._plugin_service.match_plugins(text)
 
     async def on_markdown_input_submitted(self, event: MarkdownInput.Submitted) -> None:
         text = event.value.strip()
@@ -348,12 +360,7 @@ class ChatApp(App):
         
         # If plugins matched, inject them BEFORE the user's message
         if matched_plugins:
-            plugin_context = ""
-            for plugin in matched_plugins:
-                plugin_context += f"<PluginDetails name='{plugin.name}'>\n{plugin.instructions}\n</PluginDetails>\n\n"
-            
-            # Plugin context comes BEFORE user's text so agent can use it to respond
-            enhanced_text = plugin_context + text
+            enhanced_text = self._plugin_service.enhance_prompt(text, matched_plugins)
             
             # Add user message to thread (with enhanced context)
             self.thread.messages.append(Message(role="user", content=enhanced_text))
@@ -385,7 +392,7 @@ class ChatApp(App):
 
         current_content = []
         tool_block = None
-        subagent_blocks: dict[str, SubagentBlock] = {}  # Track by toolUseId
+        subagent_blocks: dict[str, SubagentBlock] = {}
 
         def on_subagent_stream(tool_use_id: str, **kwargs):
             subagent = subagent_blocks.get(tool_use_id)
@@ -404,7 +411,6 @@ class ChatApp(App):
         def on_stream(**kwargs):
             nonlocal tool_block, current_content
             
-            # Check for cancellation
             if self._cancel_hook.cancelled:
                 return
             
@@ -415,7 +421,6 @@ class ChatApp(App):
                         if "toolResult" in block:
                             tr = block["toolResult"]
                             tool_use_id = tr.get("toolUseId")
-                            # Check if this is a subagent result
                             if tool_use_id and tool_use_id in subagent_blocks:
                                 subagent = subagent_blocks[tool_use_id]
                                 if tr.get("status") == "error":
@@ -424,7 +429,8 @@ class ChatApp(App):
                                     self.call_from_thread(subagent.mark_finished)
                                 del subagent_blocks[tool_use_id]
                             else:
-                                indicators = chat.query("ToolIndicator")
+                                from nora.widgets.chat import ToolIndicator
+                                indicators = chat.query(ToolIndicator)
                                 for ind in reversed(list(indicators)):
                                     if not ind.finished:
                                         if tr.get("status") == "error":
@@ -435,7 +441,6 @@ class ChatApp(App):
                 elif msg.get("role") == "assistant":
                     for block in msg.get("content", []):
                         if "toolUse" in block:
-                            # Flush current content as a message before tool use
                             if current_content:
                                 text = "".join(current_content)
                                 self.thread.messages.append(Message(role="assistant", content=text))
@@ -447,7 +452,6 @@ class ChatApp(App):
                             tool_use_id = tu.get("toolUseId")
                             
                             if tool_name == "Subagent":
-                                # Create subagent block with current expanded state
                                 subagent_prompt = tu.get("input", {}).get("prompt", "")
                                 subagent_block = SubagentBlock(subagent_prompt, collapsed=not self._subagent_expanded)
                                 if tool_use_id:
@@ -478,14 +482,14 @@ class ChatApp(App):
         cancelled = False
 
         def mark_last_tool_failed():
-            indicators = chat.query("ToolIndicator")
+            from nora.widgets.chat import ToolIndicator
+            indicators = chat.query(ToolIndicator)
             for ind in reversed(list(indicators)):
                 if not ind.finished:
                     ind.mark_failed()
                     break
 
         def run_agent_with_cancellation(input_data):
-            """Wrapper that checks cancellation before executing agent."""
             if self._cancel_hook.cancelled:
                 return None
             return self.agent(input_data, invocation_state=invocation_state)
@@ -493,7 +497,7 @@ class ChatApp(App):
         try:
             result = await loop.run_in_executor(None, lambda: run_agent_with_cancellation(prompt))
             
-            if result is None:  # Cancelled before execution
+            if result is None:
                 cancelled = True
             else:
                 while result.stop_reason == "interrupt" and not rejected and not self._cancel_hook.cancelled:
@@ -512,7 +516,7 @@ class ChatApp(App):
                         })
                     if not rejected and not self._cancel_hook.cancelled:
                         result = await loop.run_in_executor(None, lambda: run_agent_with_cancellation(responses))
-                        if result is None:  # Cancelled during continuation
+                        if result is None:
                             cancelled = True
                             break
         except asyncio.CancelledError:
@@ -526,17 +530,17 @@ class ChatApp(App):
         loading.remove()
 
         if cancelled or self._cancel_hook.cancelled:
-            pass  # Keep agent state - it retains context from files read, etc.
+            pass
         elif rejected:
-            pass  # Keep agent state after rejection too
+            pass
         else:
-            # Flush any remaining content
             if current_content:
                 text = "".join(current_content)
                 self.thread.messages.append(Message(role="assistant", content=text))
                 chat.mount(ChatMessage("assistant", text))
                 chat.scroll_end()
-        save_thread(self.thread)
+        
+        self._thread_service.save(self.thread)
         self._set_processing(False)
 
     async def _get_confirmation(self, name: str, reason: dict) -> str:

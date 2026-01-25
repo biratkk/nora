@@ -4,7 +4,7 @@ from pathlib import Path
 from strands import tool
 from strands.types.tools import ToolContext
 
-from nora.utils.files import load_gitignore
+from nora.utils.files import load_gitignore, is_binary_file
 
 
 def _validate_path(path: str) -> Path:
@@ -25,16 +25,6 @@ def _validate_path(path: str) -> Path:
     return resolved
 
 
-def _is_binary(path: Path) -> bool:
-    """Check if file is binary."""
-    try:
-        with open(path, "rb") as f:
-            chunk = f.read(8192)
-            return b"\x00" in chunk
-    except OSError:
-        return False
-
-
 @tool(name="Read")
 def read_file(path: str) -> str:
     """Read contents of a file in current working directory.
@@ -45,7 +35,7 @@ def read_file(path: str) -> str:
     resolved = _validate_path(path)
     if not resolved.exists():
         raise FileNotFoundError(f"File '{path}' not found")
-    if _is_binary(resolved):
+    if is_binary_file(resolved):
         raise ValueError(f"File '{path}' is binary")
     return resolved.read_text()
 
@@ -86,7 +76,7 @@ def edit_file(tool_context: ToolContext, path: str, old_text: str, new_text: str
     resolved = _validate_path(path)
     if not resolved.exists():
         raise FileNotFoundError(f"File '{path}' not found")
-    if _is_binary(resolved):
+    if is_binary_file(resolved):
         raise ValueError(f"File '{path}' is binary")
     
     file_content = resolved.read_text()
