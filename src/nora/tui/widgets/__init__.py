@@ -7,8 +7,8 @@ from nora.tui.widgets.input import MarkdownInput
 from nora.tui.widgets.confirmation import ToolConfirmModal
 from nora.tui.widgets.modal import BaseModal
 from nora.tui.widgets.model_modal import ModelSelectorModal
-from nora.tui.widgets.diff_modal import DiffModal
 from nora.tui.widgets.switch_modal import SwitchModal
 from nora.tui.widgets.add_plugin_modal import AddPluginModal
+from nora.screens.diff_modal import DiffModal
 
 __all__ = ["ChatMessage", "ToolCallBlock", "ToolIndicator", "SubagentBlock", "AutocompleteWidget", "AutocompleteItem", "LoadingWidget", "MarkdownInput", "ToolConfirmModal", "BaseModal", "ModelSelectorModal", "DiffModal", "SwitchModal", "AddPluginModal"]

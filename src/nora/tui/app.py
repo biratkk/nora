@@ -546,7 +546,7 @@ class ChatApp(App):
     async def _get_confirmation(self, name: str, reason: dict) -> str:
         """Show confirmation modal and return user response."""
         if name == "diff-confirm":
-            return await self.push_screen_wait(DiffModal(reason["path"], reason["old"], reason["new"]))
+            return await self.push_screen_wait(DiffModal(reason["path"], reason["old"], reason["new"], reason["reason"]))
         tool_name = name.replace("-confirm", "")
         return await self.push_screen_wait(ToolConfirmModal(tool_name, reason))
 

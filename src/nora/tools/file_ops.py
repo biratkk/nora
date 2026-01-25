@@ -41,17 +41,18 @@ def read_file(path: str) -> str:
 
 
 @tool(name="Write", context=True)
-def write_file(tool_context: ToolContext, path: str, content: str) -> str:
+def write_file(tool_context: ToolContext, path: str, content: str, reason: str) -> str:
     """Write content to a file in current working directory.
     
     Args:
         path: Relative path to the file
         content: Content to write
+        reason: One-line summary of the purpose of this write
     """
     resolved = _validate_path(path)
     
     old_content = resolved.read_text() if resolved.exists() else ""
-    approval = tool_context.interrupt("diff-confirm", reason={"path": path, "old": old_content, "new": content})
+    approval = tool_context.interrupt("diff-confirm", reason={"path": path, "old": old_content, "new": content, "reason": reason})
     if approval == "reject":
         raise ValueError(f"Tool call rejected by user")
     if approval.lower() != "y":
@@ -65,13 +66,14 @@ def write_file(tool_context: ToolContext, path: str, content: str) -> str:
 
 
 @tool(name="Edit", context=True)
-def edit_file(tool_context: ToolContext, path: str, old_text: str, new_text: str) -> str:
+def edit_file(tool_context: ToolContext, path: str, old_text: str, new_text: str, reason: str) -> str:
     """Edit existing file by replacing text.
     
     Args:
         path: Relative path to the file
         old_text: Text to find and replace
         new_text: Replacement text
+        reason: One-line summary of the purpose of this edit
     """
     resolved = _validate_path(path)
     if not resolved.exists():
@@ -84,7 +86,7 @@ def edit_file(tool_context: ToolContext, path: str, old_text: str, new_text: str
         raise ValueError(f"Text not found in '{path}'")
     
     new_content = file_content.replace(old_text, new_text, 1)
-    approval = tool_context.interrupt("diff-confirm", reason={"path": path, "old": file_content, "new": new_content})
+    approval = tool_context.interrupt("diff-confirm", reason={"path": path, "old": file_content, "new": new_content, "reason": reason})
     if approval == "reject":
         raise ValueError(f"Tool call rejected by user")
     if approval.lower() != "y":

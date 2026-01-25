@@ -2,7 +2,7 @@
 
 import difflib
 from textual.app import ComposeResult
-from textual.containers import Container, VerticalScroll, Vertical
+from textual.containers import Container, VerticalScroll, Vertical, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Static, Input
 from textual.binding import Binding
@@ -19,14 +19,17 @@ class DiffModal(ModalScreen[str]):
 
     DEFAULT_CSS = """
     DiffModal { background: $surface; }
-    DiffModal #diff-container { height: 1fr; padding: 1; }
-    DiffModal #diff-scroll { height: 1fr; padding: 0 1; border: round $primary; align: center middle; }
+    DiffModal #diff-container { height: 1fr; margin: 1; border: round $primary; }
+    DiffModal #diff-scroll { height: 1fr; padding: 0 1; align: center middle; }
     DiffModal #diff-content { height: auto; width: 100%; }
     DiffModal .line-del { background: #5c1c1c; }
     DiffModal .line-add { background: #1c5c1c; }
+    DiffModal #status-bar { height: auto; background: $primary; width: 100%; layout: horizontal; }
+    DiffModal #status-bar > Static { background: $primary; padding: 0 1; }
+    DiffModal #status-left { width: 1fr; }
+    DiffModal #status-right { width: auto; }
     DiffModal #input-container { height: auto; padding: 0 1; }
-    DiffModal #suggestion-input { border: round $accent; }
-    DiffModal #status-bar { height: 1; background: $primary; padding: 0 1; }
+    DiffModal #suggestion-input { border: round $accent; background: transparent; }
     VerticalScroll { scrollbar-size: 0 0; }
     """
 
@@ -36,7 +39,7 @@ class DiffModal(ModalScreen[str]):
         Binding("escape", "cancel", "Cancel"),
     ]
 
-    def __init__(self, path: str, old_content: str, new_content: str) -> None:
+    def __init__(self, path: str, old_content: str, new_content: str, reason: str) -> None:
         """
         Initialize the diff modal.
         
@@ -44,20 +47,24 @@ class DiffModal(ModalScreen[str]):
             path: File path being modified.
             old_content: Original file content.
             new_content: New file content.
+            reason: One-line summary of the purpose of this change.
         """
         super().__init__()
         self.path = path
         self.old_content = old_content
         self.new_content = new_content
+        self.reason = reason
 
     def compose(self) -> ComposeResult:
         """Compose the diff modal layout."""
         with Container(id="diff-container"):
             with VerticalScroll(id="diff-scroll"):
                 yield Vertical(id="diff-content")
+            with Horizontal(id="status-bar"):
+                yield Static(f"[bold]{self.path}[/bold] · {self.reason}", id="status-left")
+                yield Static("Ctrl+D/U: scroll | Ctrl+Y: accept | Ctrl+N: reject", id="status-right")
         with Container(id="input-container"):
             yield Input(placeholder="Suggest improvements...", id="suggestion-input")
-        yield Static("Ctrl+D/U: scroll | Ctrl+Y: accept | Ctrl+N: reject | Esc: cancel", id="status-bar")
 
     def on_mount(self) -> None:
         """Render diff after mount."""

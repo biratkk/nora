@@ -56,7 +56,17 @@ nora chat -p aws-profile     # Use AWS profile
 
 ### Tools
 
-`Read` `Write` `Edit` `Explore` `Search` `Subagent` `Fetch`
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| `Read` | `path` | Read file contents |
+| `Write` | `path`, `content`, `reason` | Write file (shows diff) |
+| `Edit` | `path`, `old_text`, `new_text`, `reason` | Find & replace (shows diff) |
+| `Explore` | `path` | List directory contents |
+| `Search` | `pattern`, `path` | Grep for text |
+| `Subagent` | `prompt` | Spawn read-only research agent |
+| `Fetch` | `url` | Fetch webpage HTML |
+
+The `reason` parameter provides a one-line summary shown in the diff modal header.
 
 ## Configuration
 

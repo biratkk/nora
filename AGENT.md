@@ -56,7 +56,25 @@ from nora.services import (
 
 ## Tools
 
-`Read` `Write` `Edit` `Explore` `Search` `Subagent` `Fetch`
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| `Read` | `path` | Read file contents |
+| `Write` | `path`, `content`, `reason` | Write file (shows diff) |
+| `Edit` | `path`, `old_text`, `new_text`, `reason` | Find & replace (shows diff) |
+| `Explore` | `path` | List directory contents |
+| `Search` | `pattern`, `path` | Grep for text |
+| `Subagent` | `prompt` | Spawn read-only research agent |
+| `Fetch` | `url` | Fetch webpage HTML |
+
+### Write/Edit Reason Parameter
+
+The `reason` parameter is required for `Write` and `Edit` tools. It provides a one-line summary of the change purpose, displayed in the diff modal header:
+
+```
+[bold]path/to/file.py[/bold] · Reason for the change
+```
+
+The diff modal shows: **filepath** `·` reason (middle dot separator).
 
 ## Storage
 
