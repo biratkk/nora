@@ -466,8 +466,8 @@ class ChatApp(App):
                             tool_input = tu.get("input", {})
                             
                             if tool_name == "Subagent":
-                                subagent_prompt = tool_input.get("prompt", "")
-                                subagent_block = SubagentBlock(subagent_prompt, collapsed=not self._subagent_expanded)
+                                subagent_reason = tool_input.get("reason", "Running subagent.")
+                                subagent_block = SubagentBlock(subagent_reason, collapsed=not self._subagent_expanded)
                                 if tool_use_id:
                                     subagent_blocks[tool_use_id] = subagent_block
                                 self.call_from_thread(chat.mount, subagent_block)

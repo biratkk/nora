@@ -63,7 +63,7 @@ from nora.services import (
 | `Edit` | `path`, `old_text`, `new_text`, `reason` | Find & replace (shows diff) |
 | `Explore` | `path` | List directory contents |
 | `Search` | `pattern`, `path` | Grep for text |
-| `Subagent` | `prompt` | Spawn read-only research agent |
+| `Subagent` | `prompt`, `reason` | Spawn read-only research agent |
 | `Fetch` | `url` | Fetch webpage HTML |
 | `Shell` | `program`, `args`, `reason` | Execute shell command |
 

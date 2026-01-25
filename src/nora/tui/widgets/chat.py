@@ -123,9 +123,9 @@ class SubagentBlock(Container):
     SubagentBlock .nested-content { height: 1; color: $text-muted; }
     """
 
-    def __init__(self, prompt: str, collapsed: bool = True) -> None:
+    def __init__(self, reason: str, collapsed: bool = True) -> None:
         super().__init__()
-        self.prompt = prompt[:50] + "..." if len(prompt) > 50 else prompt
+        self.reason = reason
         self.finished = False
         self.failed = False
         self.collapsed = collapsed
@@ -141,9 +141,9 @@ class SubagentBlock(Container):
     def _format_header(self) -> str:
         hint = " [dim]Ctrl+O to expand[/dim]" if self.collapsed else ""
         if self.failed:
-            return f"[red]✗ Subagent(\"{self.prompt}\")[/red]{hint}"
+            return f"[red]✗ {self.reason}[/red]{hint}"
         status = "✓" if self.finished else "⋯"
-        return f"[dim]{status} Subagent(\"{self.prompt}\")[/dim]{hint}"
+        return f"[dim]{status} {self.reason}[/dim]{hint}"
 
     def add_nested_tool(self, tool: str, params: dict) -> None:
         nested = self.query_one("#subagent-nested", Container)
