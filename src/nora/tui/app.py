@@ -18,8 +18,10 @@ from nora.services.thread_service import ThreadService
 from nora.services.plugin_service import PluginService
 from nora.services.plan_service import PlanService
 from nora.services.agent_service import AgentService, CancellationHook
-from nora.widgets import ChatMessage, ToolCallBlock, SubagentBlock, AutocompleteWidget, LoadingWidget, MarkdownInput
-from nora.screens import ToolConfirmModal, ModelSelectorModal, DiffModal, SwitchModal, AddPluginModal
+from nora.widgets import ChatMessage, ToolCallBlock, SubagentBlock, ShellBlock, AutocompleteWidget, LoadingWidget, MarkdownInput
+from nora.screens import ToolConfirmModal, ModelSelectorModal, DiffModal, SwitchModal, AddPluginModal, ShellApprovalModal, TrustLevelModal
+from nora.services.trust_service import TrustService, TrustDecision
+from nora.tools.shell import execute_shell_after_approval
 
 MODE_COLORS = {"vibe": "cyan", "plan": "yellow", "act": "green"}
 
@@ -136,6 +138,9 @@ class ChatApp(App):
         self._subagent_expanded = not self._subagent_expanded
         chat = self.query_one("#chat", VerticalScroll)
         for block in chat.query(SubagentBlock):
+            if block.collapsed == self._subagent_expanded:
+                block.toggle_collapsed()
+        for block in chat.query(ShellBlock):
             if block.collapsed == self._subagent_expanded:
                 block.toggle_collapsed()
 
@@ -393,6 +398,7 @@ class ChatApp(App):
         current_content = []
         tool_block = None
         subagent_blocks: dict[str, SubagentBlock] = {}
+        shell_blocks: dict[str, ShellBlock] = {}
 
         def on_subagent_stream(tool_use_id: str, **kwargs):
             subagent = subagent_blocks.get(tool_use_id)
@@ -428,6 +434,13 @@ class ChatApp(App):
                                 else:
                                     self.call_from_thread(subagent.mark_finished)
                                 del subagent_blocks[tool_use_id]
+                            elif tool_use_id and tool_use_id in shell_blocks:
+                                shell_block = shell_blocks[tool_use_id]
+                                if tr.get("status") == "error":
+                                    self.call_from_thread(shell_block.mark_failed)
+                                else:
+                                    self.call_from_thread(shell_block.mark_finished)
+                                del shell_blocks[tool_use_id]
                             else:
                                 from nora.widgets.chat import ToolIndicator
                                 indicators = chat.query(ToolIndicator)
@@ -450,25 +463,35 @@ class ChatApp(App):
                             tu = block["toolUse"]
                             tool_name = tu["name"]
                             tool_use_id = tu.get("toolUseId")
+                            tool_input = tu.get("input", {})
                             
                             if tool_name == "Subagent":
-                                subagent_prompt = tu.get("input", {}).get("prompt", "")
+                                subagent_prompt = tool_input.get("prompt", "")
                                 subagent_block = SubagentBlock(subagent_prompt, collapsed=not self._subagent_expanded)
                                 if tool_use_id:
                                     subagent_blocks[tool_use_id] = subagent_block
                                 self.call_from_thread(chat.mount, subagent_block)
                                 tool_block = None
+                            elif tool_name == "Shell":
+                                program = tool_input.get("program", "")
+                                args = tool_input.get("args", [])
+                                reason = tool_input.get("reason", "")
+                                shell_block = ShellBlock(program, args, reason, collapsed=not self._subagent_expanded)
+                                if tool_use_id:
+                                    shell_blocks[tool_use_id] = shell_block
+                                self.call_from_thread(chat.mount, shell_block)
+                                tool_block = None
                             else:
                                 if tool_block is None:
                                     tool_block = ToolCallBlock()
                                     self.call_from_thread(chat.mount, tool_block)
-                                self.call_from_thread(tool_block.add_tool, tool_name, tu.get("input", {}))
+                                self.call_from_thread(tool_block.add_tool, tool_name, tool_input)
                             
                             self.call_from_thread(chat.scroll_end)
                             self.thread.messages.append(Message(
                                 role="tool_call",
                                 tool=tool_name,
-                                parameters=tu.get("input", {})
+                                parameters=tool_input
                             ))
 
             if "data" in kwargs:
@@ -476,7 +499,7 @@ class ChatApp(App):
                 current_content.append(kwargs["data"])
 
         self.agent.callback_handler = on_stream
-        invocation_state = {"subagent_callback": on_subagent_stream, "profile": self.profile, "cancel_hook": self._cancel_hook}
+        invocation_state = {"subagent_callback": on_subagent_stream, "profile": self.profile, "cancel_hook": self._cancel_hook, "thread_id": self.thread.id}
         loop = asyncio.get_event_loop()
         rejected = False
         cancelled = False
@@ -530,9 +553,13 @@ class ChatApp(App):
         loading.remove()
 
         if cancelled or self._cancel_hook.cancelled:
-            pass
+            # Clear interrupt state so next message can be a regular string prompt
+            # Note: agent.messages (conversation history) is preserved, only interrupt tracking is cleared
+            self.agent._interrupt_state.deactivate()
         elif rejected:
-            pass
+            # Clear interrupt state so next message can be a regular string prompt
+            # Note: agent.messages (conversation history) is preserved, only interrupt tracking is cleared
+            self.agent._interrupt_state.deactivate()
         else:
             if current_content:
                 text = "".join(current_content)
@@ -547,8 +574,62 @@ class ChatApp(App):
         """Show confirmation modal and return user response."""
         if name == "diff-confirm":
             return await self.push_screen_wait(DiffModal(reason["path"], reason["old"], reason["new"], reason["reason"]))
+        if name == "shell-confirm":
+            return await self._handle_shell_confirmation(reason)
         tool_name = name.replace("-confirm", "")
         return await self.push_screen_wait(ToolConfirmModal(tool_name, reason))
+    
+    async def _handle_shell_confirmation(self, reason: dict) -> str:
+        """
+        Handle shell command approval with trust policy flow.
+        
+        Args:
+            reason: Dict containing program, args, reason, command, thread_id.
+            
+        Returns:
+            Command output or rejection message.
+        """
+        program = reason["program"]
+        args = reason["args"]
+        cmd_reason = reason["reason"]
+        thread_id = reason.get("thread_id", self.thread.id)
+        
+        # Show initial approval modal
+        decision = await self.push_screen_wait(
+            ShellApprovalModal(program, args, cmd_reason)
+        )
+        
+        if decision == "n":
+            return "reject"
+        
+        if decision == "y":
+            # Allow once - execute without saving policy
+            result = execute_shell_after_approval(program, args)
+            return result
+        
+        # For 't' (trust permanent) or 's' (trust session), show trust level modal
+        trust_service = TrustService()
+        trust_levels = trust_service.get_trust_levels(program, args)
+        
+        level_selection = await self.push_screen_wait(
+            TrustLevelModal(trust_levels)
+        )
+        
+        if level_selection is None:
+            # User pressed Escape - deny the command
+            return "reject"
+        
+        # Save the policy
+        selected_level = trust_levels[level_selection - 1]
+        trust_decision = (
+            TrustDecision.TRUST_PERMANENT if decision == "t" 
+            else TrustDecision.TRUST_SESSION
+        )
+        trust_service.save_policy(program, selected_level, trust_decision, thread_id)
+        
+        # Execute the command
+        result = execute_shell_after_approval(program, args)
+        return result
 
     def _update_message(self, content: str) -> None:
         chat = self.query_one("#chat", VerticalScroll)

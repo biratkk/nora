@@ -139,6 +139,88 @@ class ToolIndicator(Static):
         self.update(self._format())
 
 
+class ShellBlock(Container):
+    """
+    Collapsible container for shell command execution.
+    
+    Shows the reason in collapsed view, command details in expanded view.
+    Can be expanded/collapsed with Ctrl+O.
+    """
+    
+    DEFAULT_CSS = """
+    ShellBlock { height: auto; padding: 0 1; margin: 1 0; }
+    ShellBlock .shell-header { height: 1; }
+    ShellBlock .shell-nested { padding-left: 2; height: auto; }
+    ShellBlock .shell-nested.collapsed { display: none; }
+    ShellBlock .shell-command { height: 1; }
+    """
+
+    def __init__(
+        self, 
+        program: str, 
+        args: list[str], 
+        reason: str, 
+        collapsed: bool = True
+    ) -> None:
+        """
+        Initialize the shell block.
+        
+        Args:
+            program: The program being executed.
+            args: The command arguments.
+            reason: Brief explanation of why this command is being run.
+            collapsed: Whether to start collapsed.
+        """
+        super().__init__()
+        self.program = program
+        self.args = args
+        self.reason = reason
+        self.finished = False
+        self.failed = False
+        self.collapsed = collapsed
+
+    def compose(self) -> ComposeResult:
+        """Compose the shell block."""
+        yield Static(self._format_header(), classes="shell-header", id="shell-header")
+        classes = "shell-nested collapsed" if self.collapsed else "shell-nested"
+        with Container(classes=classes, id="shell-nested"):
+            command = f"{self.program} {' '.join(self.args)}" if self.args else self.program
+            yield Static(f"[dim]└─ {command}[/dim]", classes="shell-command")
+
+    def _format_header(self) -> str:
+        """Format the header with status and collapse hint."""
+        hint = " [dim]Ctrl+O to expand[/dim]" if self.collapsed else ""
+        
+        if self.failed:
+            return f"[red]✗ Shell({self.reason})[/red]{hint}"
+        
+        status = "✓" if self.finished else "⋯"
+        return f"[dim]{status} Shell({self.reason})[/dim]{hint}"
+
+    def mark_finished(self) -> None:
+        """Mark the shell command as successfully completed."""
+        self.finished = True
+        self.query_one("#shell-header", Static).update(self._format_header())
+
+    def mark_failed(self) -> None:
+        """Mark the shell command as failed."""
+        self.failed = True
+        self.finished = True
+        self.query_one("#shell-header", Static).update(self._format_header())
+
+    def toggle_collapsed(self) -> None:
+        """Toggle the collapsed state."""
+        self.collapsed = not self.collapsed
+        nested = self.query_one("#shell-nested", Container)
+        
+        if self.collapsed:
+            nested.add_class("collapsed")
+        else:
+            nested.remove_class("collapsed")
+        
+        self.query_one("#shell-header", Static).update(self._format_header())
+
+
 class SubagentBlock(Container):
     """
     Collapsible container for subagent execution output.

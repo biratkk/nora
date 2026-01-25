@@ -203,11 +203,11 @@ class AgentService:
         # Import here to avoid circular imports
         from nora.tools import (
             read_file, write_file, edit_file, explore_dir, 
-            search_files, run_subagent, fetch_url
+            search_files, run_subagent, fetch_url, run_shell
         )
         
         readonly_tools = [read_file, explore_dir, search_files, fetch_url]
-        full_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url]
+        full_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url, run_shell]
         
         if mode in ("plan", "subagent"):
             return readonly_tools

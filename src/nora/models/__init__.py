@@ -6,6 +6,7 @@ from nora.models.plugin import Plugin, validate_plugin_name
 from nora.models.plan import Plan
 from nora.models.settings import Settings
 from nora.models.autocomplete import AutocompleteItem
+from nora.models.trust_policy import TrustPolicyFile, Policy
 
 __all__ = [
     "Message",
@@ -17,4 +18,6 @@ __all__ = [
     "Plan",
     "Settings",
     "AutocompleteItem",
+    "TrustPolicyFile",
+    "Policy",
 ]

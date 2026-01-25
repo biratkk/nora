@@ -65,6 +65,40 @@ from nora.services import (
 | `Search` | `pattern`, `path` | Grep for text |
 | `Subagent` | `prompt` | Spawn read-only research agent |
 | `Fetch` | `url` | Fetch webpage HTML |
+| `Shell` | `program`, `args`, `reason` | Execute shell command |
+
+### Shell Tool & Trust Policy
+
+The Shell tool executes system commands with user approval. Commands require confirmation unless trusted.
+
+**Trust Levels** - When approving a command like `git log -n 5`:
+1. `git log` - Base command only
+2. `git log *` - Any arguments allowed
+3. `git log -n` - First arg only
+4. `git log -n *` - First arg + any additional
+5. `git log -n 5` - Exact command
+6. `git log -n 5 *` - Exact + any additional
+
+**Trust Scope**:
+- **Session** (`s`) - Trust only in current thread
+- **Permanent** (`t`) - Trust across all threads
+
+**Storage**: `$CWD/.nora/trust/<program>.json`
+
+```json
+{
+  "program": "git",
+  "policies": [{
+    "args": ["log", "-n"],
+    "default_trusted": true,
+    "trust_all_arguments": true,
+    "trust_all_threads": false,
+    "trusted_threads": ["20250125_190718"]
+  }]
+}
+```
+
+**Security**: Command chaining (`|`, `&&`, `;`, `>`, etc.) is blocked only when using shell programs (`bash -c "..."`) - direct execution passes args as literals.
 
 ### Write/Edit Reason Parameter
 
