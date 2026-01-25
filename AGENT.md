@@ -58,7 +58,7 @@ from nora.services import (
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `Read` | `path` | Read file contents |
+| `Read` | `path`, `start_line?`, `end_line?` | Read file contents (optionally specific line range) |
 | `Write` | `path`, `content`, `reason` | Write file (shows diff) |
 | `Edit` | `path`, `old_text`, `new_text`, `reason` | Find & replace (shows diff) |
 | `Explore` | `path` | List directory contents |

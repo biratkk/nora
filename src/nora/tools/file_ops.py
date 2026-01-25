@@ -26,18 +26,47 @@ def _validate_path(path: str) -> Path:
 
 
 @tool(name="Read")
-def read_file(path: str) -> str:
+def read_file(path: str, start_line: int | None = None, end_line: int | None = None) -> str:
     """Read contents of a file in current working directory.
     
     Args:
         path: Relative path to the file
+        start_line: Starting line number (1-indexed, inclusive). If not provided, starts from beginning.
+        end_line: Ending line number (1-indexed, inclusive). If not provided, reads to end of file.
     """
     resolved = _validate_path(path)
     if not resolved.exists():
         raise FileNotFoundError(f"File '{path}' not found")
     if is_binary_file(resolved):
         raise ValueError(f"File '{path}' is binary")
-    return resolved.read_text()
+    
+    content = resolved.read_text()
+    
+    # If no line range specified, return full content
+    if start_line is None and end_line is None:
+        return content
+    
+    lines = content.splitlines(keepends=True)
+    total_lines = len(lines)
+    
+    # Default values: start from 1, end at last line
+    start = start_line if start_line is not None else 1
+    end = end_line if end_line is not None else total_lines
+    
+    # Validate line numbers
+    if start < 1:
+        raise ValueError(f"start_line must be >= 1, got {start}")
+    if end < start:
+        raise ValueError(f"end_line ({end}) must be >= start_line ({start})")
+    if start > total_lines:
+        raise ValueError(f"start_line ({start}) exceeds file length ({total_lines} lines)")
+    
+    # Clamp end to file length
+    end = min(end, total_lines)
+    
+    # Convert to 0-indexed and slice
+    selected_lines = lines[start - 1:end]
+    return "".join(selected_lines)
 
 
 @tool(name="Write", context=True)
