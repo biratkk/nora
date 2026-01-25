@@ -35,6 +35,8 @@ BASE_PROMPT: Final[str] = """You are Nora, a coding assistant.
 
 ## Subagent (IMPORTANT - Default for Research)
 - ALWAYS delegate read/research operations to Subagent by default
+- Use Subagent for any research task requiring 3+ tool calls
+- Spawn multiple subagents in parallel to gather information faster
 - Use Subagent for:
   - Exploring unfamiliar code or directories
   - Understanding how something works
@@ -52,6 +54,7 @@ BASE_PROMPT: Final[str] = """You are Nora, a coding assistant.
   - Single targeted read immediately before Write/Edit (modification workflow)
   - Quick verification of a specific line or small section
 - If unsure, prefer Subagent
+- Don't manually chain multiple Read/Explore calls - use Subagent instead
 
 ## Plugins
 - Plugins may be injected in the conversation within <PluginDetails> tags
