@@ -17,10 +17,17 @@ class MarkdownInput(TextArea):
     }
     """
 
+    class ShellModeChanged(Message):
+        """Posted when shell mode changes."""
+        def __init__(self, shell_mode: bool) -> None:
+            super().__init__()
+            self.shell_mode = shell_mode
+
     def __init__(self, placeholder: str = "", **kwargs) -> None:
         super().__init__(**kwargs)
         self._placeholder = placeholder
         self._internal_value = ""
+        self._shell_mode = False
 
     def on_mount(self) -> None:
         self.show_line_numbers = False
@@ -28,6 +35,21 @@ class MarkdownInput(TextArea):
     @property
     def internal_value(self) -> str:
         return self._internal_value
+
+    @property
+    def is_shell_mode(self) -> bool:
+        """Check if input starts with ! (shell passthrough mode)."""
+        return self._internal_value.startswith("!")
+
+    def _update_shell_mode_style(self) -> None:
+        """Update visual style based on shell mode."""
+        is_shell = self.is_shell_mode
+        if is_shell and not self._shell_mode:
+            self._shell_mode = True
+            self.post_message(self.ShellModeChanged(True))
+        elif not is_shell and self._shell_mode:
+            self._shell_mode = False
+            self.post_message(self.ShellModeChanged(False))
 
     def _internal_to_display(self, text: str) -> str:
         return LINK_PATTERN.sub(r'\1', text)
@@ -108,6 +130,7 @@ class MarkdownInput(TextArea):
     def on_text_area_changed(self, event) -> None:
         if event.text_area == self:
             self._sync_internal()
+            self._update_shell_mode_style()
 
     def on_key(self, event: events.Key) -> None:
         if event.key == "shift+tab":
@@ -130,7 +153,7 @@ class MarkdownInput(TextArea):
                 return
             event.prevent_default()
             event.stop()
-            self.post_message(self.Submitted(self, self._internal_value))
+            self.post_message(self.Submitted(self, self._internal_value, self.is_shell_mode))
         elif event.key == "backspace":
             internal_pos = self._cursor_to_internal(self.cursor_location[1])
             link = self._find_link_before(internal_pos)
@@ -143,7 +166,8 @@ class MarkdownInput(TextArea):
                 return
 
     class Submitted(Message):
-        def __init__(self, input: "MarkdownInput", value: str) -> None:
+        def __init__(self, input: "MarkdownInput", value: str, is_shell: bool = False) -> None:
             super().__init__()
             self.input = input
             self.value = value
+            self.is_shell = is_shell

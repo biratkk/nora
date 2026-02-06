@@ -9,7 +9,7 @@ from textual.containers import Vertical, Horizontal
 from textual.widgets import Static, Input, Checkbox, Button, TextArea
 from textual.binding import Binding
 
-from nora.widgets.modal import BaseModal
+from nora.tui.widgets.modal import BaseModal
 from nora.models.plugin import Plugin
 from nora.services.plugin_service import PluginService
 from nora.services.agent_service import AgentService

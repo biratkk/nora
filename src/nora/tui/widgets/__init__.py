@@ -1,6 +1,6 @@
 """TUI widgets package."""
 
-from nora.tui.widgets.chat import ChatMessage, ToolCallBlock, ToolIndicator, SubagentBlock, ShellBlock
+from nora.tui.widgets.chat import ChatMessage, ToolCallBlock, ToolIndicator, SubagentBlock, ShellBlock, ShellMessage
 from nora.tui.widgets.autocomplete import AutocompleteWidget, AutocompleteItem
 from nora.tui.widgets.loading import LoadingWidget
 from nora.tui.widgets.input import MarkdownInput
@@ -11,4 +11,4 @@ from nora.tui.widgets.switch_modal import SwitchModal
 from nora.tui.widgets.add_plugin_modal import AddPluginModal
 from nora.screens.diff_modal import DiffModal
 
-__all__ = ["ChatMessage", "ToolCallBlock", "ToolIndicator", "SubagentBlock", "ShellBlock", "AutocompleteWidget", "AutocompleteItem", "LoadingWidget", "MarkdownInput", "ToolConfirmModal", "BaseModal", "ModelSelectorModal", "DiffModal", "SwitchModal", "AddPluginModal"]
+__all__ = ["ChatMessage", "ToolCallBlock", "ToolIndicator", "SubagentBlock", "ShellBlock", "ShellMessage", "AutocompleteWidget", "AutocompleteItem", "LoadingWidget", "MarkdownInput", "ToolConfirmModal", "BaseModal", "ModelSelectorModal", "DiffModal", "SwitchModal", "AddPluginModal"]

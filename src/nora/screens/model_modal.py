@@ -6,7 +6,7 @@ from textual.widgets import Static, Input
 
 from nora.config.constants import AVAILABLE_MODELS
 from nora.utils.fuzzy import fuzzy_filter
-from nora.widgets.modal import BaseModal
+from nora.tui.widgets.modal import BaseModal
 
 
 class ModelItem(Static):

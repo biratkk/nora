@@ -8,7 +8,7 @@ from nora.services.agent_service import AgentService
 
 @tool(name="Subagent", context=True)
 def run_subagent(tool_context: ToolContext, prompt: str, reason: str) -> str:
-    """Run a subagent to research or explore a topic. Use for complex queries needing multiple tool calls.
+    """Run a subagent to research or explore a topic.
     
     Args:
         prompt: Detailed instructions for what the subagent should find or do

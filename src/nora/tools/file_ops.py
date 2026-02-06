@@ -42,8 +42,14 @@ def read_file(path: str, start_line: int | None = None, end_line: int | None = N
     
     content = resolved.read_text()
     
-    # If no line range specified, return full content
+    MAX_LINES = 2000
+    
+    # If no line range specified, return full content (truncated if huge)
     if start_line is None and end_line is None:
+        lines = content.splitlines(keepends=True)
+        if len(lines) > MAX_LINES:
+            truncated = "".join(lines[:MAX_LINES])
+            return f"{truncated}\n\n... ({len(lines) - MAX_LINES} more lines truncated. Use start_line/end_line to read specific sections.)"
         return content
     
     lines = content.splitlines(keepends=True)
@@ -156,6 +162,8 @@ def search_files(pattern: str, path: str = ".") -> str:
     """
     import subprocess
     
+    MAX_LINES = 200
+    
     try:
         result = subprocess.run(
             ["grep", "-rn", "--exclude-dir=.git", pattern, path],
@@ -164,7 +172,14 @@ def search_files(pattern: str, path: str = ".") -> str:
             timeout=30
         )
         output = result.stdout.strip()
-        return output if output else f"No matches found for '{pattern}'"
+        if not output:
+            return f"No matches found for '{pattern}'"
+        
+        lines = output.split("\n")
+        if len(lines) > MAX_LINES:
+            truncated = "\n".join(lines[:MAX_LINES])
+            return f"{truncated}\n\n... ({len(lines) - MAX_LINES} more matches truncated. Narrow your search pattern or target a specific path.)"
+        return output
     except subprocess.TimeoutExpired:
         return "Search timed out"
     except FileNotFoundError:

@@ -1,6 +1,7 @@
 """Main TUI application."""
 
 import asyncio
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -18,7 +19,7 @@ from nora.services.thread_service import ThreadService
 from nora.services.plugin_service import PluginService
 from nora.services.plan_service import PlanService
 from nora.services.agent_service import AgentService, CancellationHook
-from nora.widgets import ChatMessage, ToolCallBlock, SubagentBlock, ShellBlock, AutocompleteWidget, LoadingWidget, MarkdownInput
+from nora.widgets import ChatMessage, ToolCallBlock, ToolIndicator, SubagentBlock, ShellBlock, ShellMessage, AutocompleteWidget, LoadingWidget, MarkdownInput
 from nora.screens import ToolConfirmModal, ModelSelectorModal, DiffModal, SwitchModal, AddPluginModal, ShellApprovalModal, TrustLevelModal
 from nora.services.trust_service import TrustService, TrustDecision
 from nora.tools.shell import execute_shell_after_approval
@@ -27,26 +28,29 @@ MODE_COLORS = {"vibe": "cyan", "plan": "yellow", "act": "green"}
 
 
 class ChatApp(App):
+    ANSI_COLOR = True
     CSS = """
     VerticalScroll { scrollbar-size: 1 1; }
-    #main { padding: 1 2; background: black; }
+    #main { padding: 1 2; background: #010101; }
     #chat-area { width: 1fr; height: 1fr; }
     #chat-container { height: 1fr; }
     #chat { height: 1fr; }
     .message-user, .message-assistant { padding: 0 1; height: auto; margin-bottom: 1; }
     .message-user { border-left: solid $primary; background: $primary 10%; padding: 1; }
     .message-assistant { }
-    .message-tool { height: auto; padding: 0 1; margin: 1 0; }
+    .message-tool { height: auto; padding: 0 1; margin: 0 0; }
     .message-content { margin: 0; padding: 0; }
     .message-time { dock: right; width: auto; }
-    .message-user Markdown { margin: 0; padding: 0; }
-    .message-user MarkdownBlock { margin: 0; padding: 0; }
-    ToolIndicator { height: 1; }
+    Markdown { margin: 0; padding: 0; }
+    MarkdownBlock { margin: 0; padding: 0; }
+    .message-assistant MarkdownParagraph:last-child { margin: 0; }
     MarkdownHeader { content-align: left middle; }
-    #input-container { padding: 0 1 1 1; height: auto; dock: bottom; }
-    #input { height: auto; min-height: 3; max-height: 30; border: round $accent; background: transparent; }
+    #input-container { padding: 0 1 1 1; height: auto; dock: bottom; border-left: solid $primary; background: #1a1a1a; }
+    #input { height: auto; min-height: 3; max-height: 30; border:transparent; background: #1a1a1a; }
+    #input:focus { background: #1a1a1a; }
+    #input .text-area--cursor-line { background: #1a1a1a; }
+    #input.shell-mode { border: round red; }
     #input.disabled { opacity: 0.5; }
-    #cancel-hint { height: 1; color: $text-muted; padding: 0 1; }
     #autocomplete { dock: bottom; margin-bottom: 4; }
     #status-bar { height: 1; dock: bottom; background: $surface; }
     #mode-indicator { width: auto; padding: 0 1; }
@@ -93,7 +97,6 @@ class ChatApp(App):
             yield AutocompleteWidget(id="autocomplete")
             with Container(id="input-container"):
                 yield MarkdownInput(placeholder="Type a message... (@file /cmd)", id="input")
-                yield Static("", id="cancel-hint")
         with Horizontal(id="status-bar"):
             yield Static(f" {self.thread.mode.upper()} ", id="mode-indicator", classes=f"mode-{self.thread.mode}")
             yield Static(f" {self._agent_service.get_model_name()} ", id="model-name")
@@ -122,16 +125,13 @@ class ChatApp(App):
     def _set_processing(self, processing: bool) -> None:
         self._processing = processing
         inp = self.query_one("#input", MarkdownInput)
-        hint = self.query_one("#cancel-hint", Static)
         if processing:
             self._cancel_hook.reset()
             inp.disabled = True
             inp.add_class("disabled")
-            hint.update("[dim]Ctrl+C to cancel[/dim]")
         else:
             inp.disabled = False
             inp.remove_class("disabled")
-            hint.update("")
             inp.focus()
 
     def action_toggle_subagent_output(self) -> None:
@@ -143,10 +143,17 @@ class ChatApp(App):
         for block in chat.query(ShellBlock):
             if block.collapsed == self._subagent_expanded:
                 block.toggle_collapsed()
+        for block in chat.query(ToolIndicator):
+            if block.tool in ToolIndicator.VERBOSE_TOOLS and block.collapsed == self._subagent_expanded:
+                block.toggle_collapsed()
 
     def on_mount(self) -> None:
         self._load_plugins()
         self._init_agent()
+        # Set initial input container border color
+        input_container = self.query_one("#input-container", Container)
+        input_container.styles.border_left = ("solid", MODE_COLORS[self.thread.mode])
+        
         chat = self.query_one("#chat", VerticalScroll)
         
         tool_block = None
@@ -156,6 +163,9 @@ class ChatApp(App):
                     tool_block = ToolCallBlock()
                     chat.mount(tool_block)
                 tool_block.add_tool(msg.tool or "", msg.parameters or {}, finished=True)
+            elif msg.role == "shell":
+                tool_block = None
+                chat.mount(ShellMessage(msg.content or "", msg.output or ""))
             else:
                 tool_block = None
                 chat.mount(ChatMessage(msg.role, msg.content or ""))
@@ -196,6 +206,9 @@ class ChatApp(App):
                     tool_block = ToolCallBlock()
                     chat.mount(tool_block)
                 tool_block.add_tool(msg.tool or "", msg.parameters or {}, finished=True)
+            elif msg.role == "shell":
+                tool_block = None
+                chat.mount(ShellMessage(msg.content or "", msg.output or ""))
             else:
                 tool_block = None
                 chat.mount(ChatMessage(msg.role, msg.content or ""))
@@ -224,6 +237,9 @@ class ChatApp(App):
         for mode in MODE_CYCLE:
             indicator.remove_class(f"mode-{mode}")
         indicator.add_class(f"mode-{self.thread.mode}")
+        # Update input container border color
+        input_container = self.query_one("#input-container", Container)
+        input_container.styles.border_left = ("solid", MODE_COLORS[self.thread.mode])
 
     def action_cycle_mode(self) -> None:
         self._thread_service.cycle_mode(self.thread)
@@ -338,11 +354,23 @@ class ChatApp(App):
         """Use fuzzy matching to find plugins whose keywords match the text."""
         return self._plugin_service.match_plugins(text)
 
+    def on_markdown_input_shell_mode_changed(self, event: MarkdownInput.ShellModeChanged) -> None:
+        input_container = self.query_one("#input-container", Container)
+        if event.shell_mode:
+            input_container.styles.border_left = ("solid", "red")
+        else:
+            input_container.styles.border_left = ("solid", MODE_COLORS[self.thread.mode])
+
     async def on_markdown_input_submitted(self, event: MarkdownInput.Submitted) -> None:
         text = event.value.strip()
         if not text:
             return
         event.input.clear()
+
+        # Handle shell passthrough commands
+        if event.is_shell:
+            await self._execute_shell_passthrough(text[1:].strip())  # Strip the ! prefix
+            return
 
         if text == "/exit":
             self.exit()
@@ -388,10 +416,44 @@ class ChatApp(App):
             self._set_processing(True)
             self._current_worker = self.run_worker(self._fetch_response(text), exclusive=True)
 
+    async def _execute_shell_passthrough(self, command: str) -> None:
+        """
+        Execute a shell passthrough command directly.
+        
+        Args:
+            command: Shell command to execute (without ! prefix).
+        """
+        chat = self.query_one("#chat", VerticalScroll)
+        
+        # Execute the command
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                cwd=Path.cwd()
+            )
+            output = result.stdout + result.stderr
+        except Exception as e:
+            output = str(e)
+        
+        # Display in chat
+        chat.mount(ShellMessage(command, output.rstrip()))
+        chat.scroll_end()
+        
+        # Save to thread history (NOT to agent context)
+        self.thread.messages.append(Message(
+            role="shell",
+            content=command,
+            output=output.rstrip()
+        ))
+        self._thread_service.save(self.thread)
+
     async def _fetch_response(self, prompt: str) -> None:
         chat = self.query_one("#chat", VerticalScroll)
         chat_container = self.query_one("#chat-container", Container)
-        loading = LoadingWidget(message="Thinking")
+        loading = LoadingWidget(message="Thinking", style="bar", color=MODE_COLORS[self.thread.mode])
         chat_container.mount(loading)
         chat.scroll_end()
 
@@ -399,6 +461,7 @@ class ChatApp(App):
         tool_block = None
         subagent_blocks: dict[str, SubagentBlock] = {}
         shell_blocks: dict[str, ShellBlock] = {}
+        indicator_blocks: dict[str, ToolIndicator] = {}
 
         def on_subagent_stream(tool_use_id: str, **kwargs):
             subagent = subagent_blocks.get(tool_use_id)
@@ -436,13 +499,33 @@ class ChatApp(App):
                                 del subagent_blocks[tool_use_id]
                             elif tool_use_id and tool_use_id in shell_blocks:
                                 shell_block = shell_blocks[tool_use_id]
+                                # Extract output from toolResult content
+                                output_text = ""
+                                for content_block in tr.get("content", []):
+                                    if "text" in content_block:
+                                        output_text += content_block["text"]
+                                if output_text:
+                                    self.call_from_thread(shell_block.set_output, output_text)
                                 if tr.get("status") == "error":
                                     self.call_from_thread(shell_block.mark_failed)
                                 else:
                                     self.call_from_thread(shell_block.mark_finished)
                                 del shell_blocks[tool_use_id]
+                            elif tool_use_id and tool_use_id in indicator_blocks:
+                                ind = indicator_blocks[tool_use_id]
+                                # Extract output for verbose tools
+                                output_text = ""
+                                for content_block in tr.get("content", []):
+                                    if "text" in content_block:
+                                        output_text += content_block["text"]
+                                if output_text and ind.tool in ToolIndicator.VERBOSE_TOOLS:
+                                    self.call_from_thread(ind.set_output, output_text)
+                                if tr.get("status") == "error":
+                                    self.call_from_thread(ind.mark_failed)
+                                else:
+                                    self.call_from_thread(ind.mark_finished)
+                                del indicator_blocks[tool_use_id]
                             else:
-                                from nora.widgets.chat import ToolIndicator
                                 indicators = chat.query(ToolIndicator)
                                 for ind in reversed(list(indicators)):
                                     if not ind.finished:
@@ -485,7 +568,11 @@ class ChatApp(App):
                                 if tool_block is None:
                                     tool_block = ToolCallBlock()
                                     self.call_from_thread(chat.mount, tool_block)
-                                self.call_from_thread(tool_block.add_tool, tool_name, tool_input)
+                                collapsed = not self._subagent_expanded
+                                indicator = ToolIndicator(tool_name, tool_input, collapsed=collapsed)
+                                if tool_use_id:
+                                    indicator_blocks[tool_use_id] = indicator
+                                self.call_from_thread(tool_block.mount, indicator)
                             
                             self.call_from_thread(chat.scroll_end)
                             self.thread.messages.append(Message(
@@ -505,7 +592,6 @@ class ChatApp(App):
         cancelled = False
 
         def mark_last_tool_failed():
-            from nora.widgets.chat import ToolIndicator
             indicators = chat.query(ToolIndicator)
             for ind in reversed(list(indicators)):
                 if not ind.finished:

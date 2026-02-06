@@ -171,3 +171,23 @@ class ThreadService:
         new_mode = MODE_CYCLE[(current_idx + 1) % len(MODE_CYCLE)]
         thread.mode = new_mode
         return new_mode
+    
+    def add_shell_message(self, thread: Thread, command: str, output: str) -> Message:
+        """
+        Add a shell passthrough command to a thread.
+        
+        Args:
+            thread: Target thread.
+            command: Shell command executed.
+            output: Command output.
+            
+        Returns:
+            The created Message instance.
+        """
+        message = Message(
+            role="shell",
+            content=command,
+            output=output
+        )
+        self.add_message(thread, message)
+        return message

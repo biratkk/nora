@@ -98,38 +98,38 @@ class DiffModal(ModalScreen[str]):
                     start = max(0, length - context)
                     for k in range(start, length):
                         ln = i1 + k + 1
-                        pane.mount(Static(f"{ln:4}   {old_lines[i1 + k]}"))
+                        pane.mount(Static(f"{ln:4}   {old_lines[i1 + k]}", markup=False))
                 elif idx == len(opcodes) - 1:
                     for k in range(min(context, length)):
                         ln = i1 + k + 1
-                        pane.mount(Static(f"{ln:4}   {old_lines[i1 + k]}"))
+                        pane.mount(Static(f"{ln:4}   {old_lines[i1 + k]}", markup=False))
                 else:
                     if length <= context * 2:
                         for k in range(length):
                             ln = i1 + k + 1
-                            pane.mount(Static(f"{ln:4}   {old_lines[i1 + k]}"))
+                            pane.mount(Static(f"{ln:4}   {old_lines[i1 + k]}", markup=False))
                     else:
                         for k in range(context):
                             ln = i1 + k + 1
-                            pane.mount(Static(f"{ln:4}   {old_lines[i1 + k]}"))
+                            pane.mount(Static(f"{ln:4}   {old_lines[i1 + k]}", markup=False))
                         for k in range(length - context, length):
                             ln = i1 + k + 1
-                            pane.mount(Static(f"{ln:4}   {old_lines[i1 + k]}"))
+                            pane.mount(Static(f"{ln:4}   {old_lines[i1 + k]}", markup=False))
             elif tag == "replace":
                 for k in range(i2 - i1):
                     ln = i1 + k + 1
-                    pane.mount(Static(f"{ln:4} - {old_lines[i1 + k]}", classes="line-del"))
+                    pane.mount(Static(f"{ln:4} - {old_lines[i1 + k]}", classes="line-del", markup=False))
                 for k in range(j2 - j1):
                     ln = j1 + k + 1
-                    pane.mount(Static(f"{ln:4} + {new_lines[j1 + k]}", classes="line-add"))
+                    pane.mount(Static(f"{ln:4} + {new_lines[j1 + k]}", classes="line-add", markup=False))
             elif tag == "delete":
                 for k in range(i2 - i1):
                     ln = i1 + k + 1
-                    pane.mount(Static(f"{ln:4} - {old_lines[i1 + k]}", classes="line-del"))
+                    pane.mount(Static(f"{ln:4} - {old_lines[i1 + k]}", classes="line-del", markup=False))
             elif tag == "insert":
                 for k in range(j2 - j1):
                     ln = j1 + k + 1
-                    pane.mount(Static(f"{ln:4} + {new_lines[j1 + k]}", classes="line-add"))
+                    pane.mount(Static(f"{ln:4} + {new_lines[j1 + k]}", classes="line-add", markup=False))
 
         self.query_one("#suggestion-input", Input).focus()
 

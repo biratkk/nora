@@ -55,6 +55,7 @@ class Thread(BaseModel):
         
         Returns raw_messages if available (preserves toolUse/toolResult structure),
         otherwise falls back to simplified text-only format.
+        Shell messages are excluded as they should not be sent to the agent.
         
         Returns:
             List of message dicts for Strands agent initialization.
@@ -64,7 +65,7 @@ class Thread(BaseModel):
         return [
             msg.to_agent_format() 
             for msg in self.messages 
-            if msg.is_displayable()
+            if msg.is_displayable() and msg.role != "shell"
         ]
 
     @classmethod

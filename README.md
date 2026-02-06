@@ -54,6 +54,22 @@ nora chat -p aws-profile     # Use AWS profile
 | `Ctrl+E` | Execute plan |
 | `Ctrl+O` | Toggle subagent |
 
+### Shell Passthrough (`!` prefix)
+
+Run shell commands directly without AI involvement by prefixing with `!`:
+
+```
+! ls -la
+! git status
+! npm install
+```
+
+- Input box turns **red** when `!` is detected
+- Commands execute via `shell=True` (supports pipes, redirects, etc.)
+- Output displays inline in chat
+- **No trust policy** - all commands are trusted (user-initiated)
+- **Not sent to AI** - commands are saved in thread history but excluded from agent context
+
 ### Tools
 
 | Tool | Parameters | Description |
@@ -63,7 +79,7 @@ nora chat -p aws-profile     # Use AWS profile
 | `Edit` | `path`, `old_text`, `new_text`, `reason` | Find & replace (shows diff) |
 | `Explore` | `path` | List directory contents |
 | `Search` | `pattern`, `path` | Grep for text |
-| `Subagent` | `prompt` | Spawn read-only research agent |
+| `Subagent` | `prompt`, `reason` | Spawn read-only research agent |
 | `Fetch` | `url` | Fetch webpage HTML |
 | `Shell` | `program`, `args`, `reason` | Execute shell command |
 
@@ -145,3 +161,4 @@ matched = PluginService().match_plugins("user input")
 ## License
 
 MIT
+T

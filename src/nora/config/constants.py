@@ -11,12 +11,13 @@ PLANS_DIR_NAME: Final[str] = "plans"
 PLUGINS_DIR_NAME: Final[str] = "plugins"
 
 # Default model
-DEFAULT_MODEL_ID: Final[str] = "us.anthropic.claude-opus-4-5-20251101-v1:0"
+DEFAULT_MODEL_ID: Final[str] = "us.anthropic.claude-opus-4-6-v1"
 
 # Available models with display names
 AVAILABLE_MODELS: Final[dict[str, str]] = {
     "us.anthropic.claude-sonnet-4-5-20250929-v1:0": "Claude Sonnet 4.5",
     "us.anthropic.claude-opus-4-5-20251101-v1:0": "Claude Opus 4.5",
+    "us.anthropic.claude-opus-4-6-v1": "Claude Opus 4.6",
     "us.anthropic.claude-haiku-4-5-20251001-v1:0": "Claude Haiku 4.5",
     "us.qwen.qwen3-coder-480b-a35b-v1:0": "Qwen3 Coder 480B",
 }

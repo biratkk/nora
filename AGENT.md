@@ -50,9 +50,9 @@ from nora.services import (
 | Mode | Tools | Description |
 |------|-------|-------------|
 | vibe | All | Full access |
-| plan | Read-only | Planning |
+| plan | Read-only + Subagent | Planning with research |
 | act | All | Execute plans |
-| subagent | Read-only | Research |
+| subagent | Read-only | Research (no nested subagents) |
 
 ## Tools
 
@@ -99,6 +99,27 @@ The Shell tool executes system commands with user approval. Commands require con
 ```
 
 **Security**: Command chaining (`|`, `&&`, `;`, `>`, etc.) is blocked only when using shell programs (`bash -c "..."`) - direct execution passes args as literals.
+
+### Shell Passthrough (`!` prefix)
+
+Users can run shell commands directly (bypassing the AI agent) by prefixing input with `!`:
+
+```
+! ls -la
+! git status
+```
+
+**Behavior**:
+- Input box turns red when `!` detected
+- Executes via `subprocess.run(shell=True)` - supports pipes, redirects, etc.
+- Output displays inline in chat with red left border
+- **No trust policy** - all commands trusted (user-initiated)
+- **Not sent to AI** - saved in thread history with `role: "shell"` but excluded from `to_agent_messages()`
+
+**Message Model**:
+```python
+Message(role="shell", content="ls -la", output="file1.txt\nfile2.txt")
+```
 
 ### Write/Edit Reason Parameter
 

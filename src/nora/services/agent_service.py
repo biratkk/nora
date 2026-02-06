@@ -207,10 +207,13 @@ class AgentService:
         )
         
         readonly_tools = [read_file, explore_dir, search_files, fetch_url]
+        plan_tools = readonly_tools + [run_subagent]
         full_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url, run_shell]
         
-        if mode in ("plan", "subagent"):
+        if mode == "subagent":
             return readonly_tools
+        if mode == "plan":
+            return plan_tools
         return full_tools
     
     @staticmethod
