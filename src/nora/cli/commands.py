@@ -19,19 +19,21 @@ def chat(
     profile: Optional[str] = typer.Option(None, "--profile", "-p", help="AWS profile name"),
 ) -> None:
     """Chat with Nora AI assistant."""
-    from nora.models.thread import Thread
-    from nora.models.message import Message
+    from nora.acp.models.session import Session
+    from nora.acp.models.message import AcpMessage
     from nora.services.settings_service import SettingsService
-    from nora.services.thread_service import ThreadService
+    from nora.services.session_service import SessionService
+    from nora.services.run_service import RunService
     from nora.services.agent_service import AgentService
     
     settings_service = SettingsService.get_instance()
-    thread_service = ThreadService()
+    session_service = SessionService()
+    run_service = RunService()
     agent_service = AgentService()
     
     settings = settings_service.load()
     effective_profile = profile or settings.defaultProfile
-    thread = Thread.create()
+    session = Session.create()
 
     if headless:
         if not prompt:
@@ -41,27 +43,51 @@ def chat(
         agent = agent_service.create_agent([], effective_profile)
         agent(prompt)
         
-        thread_service.add_user_message(thread, prompt)
-        thread_service.add_assistant_message(
-            thread, 
-            str(agent.messages[-1].get("content", ""))
-        )
-        thread_service.save(thread)
+        # Create and save a Run with ACP messages
+        input_msg = AcpMessage.user(prompt)
+        run = run_service.create("nora", [input_msg], session.id)
+        run_service.start(run)
+        
+        # Extract agent response
+        last_msg = agent.messages[-1] if agent.messages else {}
+        response_text = ""
+        for block in last_msg.get("content", []):
+            if "text" in block:
+                response_text += block["text"]
+        
+        output_msg = AcpMessage.agent(response_text) if response_text else AcpMessage.agent("")
+        run_service.complete(run, [output_msg])
+        run_service.save(run, list(agent.messages))
+        
+        session.generate_name(prompt)
+        session_service.save(session)
         return
 
     if prompt:
         agent = agent_service.create_agent([], effective_profile)
         agent(prompt)
         
-        thread_service.add_user_message(thread, prompt)
-        thread_service.add_assistant_message(
-            thread, 
-            str(agent.messages[-1].get("content", ""))
-        )
-        thread_service.save(thread)
+        # Create and save a Run with ACP messages
+        input_msg = AcpMessage.user(prompt)
+        run = run_service.create("nora", [input_msg], session.id)
+        run_service.start(run)
+        
+        # Extract agent response
+        last_msg = agent.messages[-1] if agent.messages else {}
+        response_text = ""
+        for block in last_msg.get("content", []):
+            if "text" in block:
+                response_text += block["text"]
+        
+        output_msg = AcpMessage.agent(response_text) if response_text else AcpMessage.agent("")
+        run_service.complete(run, [output_msg])
+        run_service.save(run, list(agent.messages))
+        
+        session.generate_name(prompt)
+        session_service.save(session)
 
     from nora.tui import run_tui
-    run_tui(thread, effective_profile)
+    run_tui(session, effective_profile)
 
 
 @app.command()
@@ -75,9 +101,20 @@ def acp(
     Exposes Nora as an ACP-compliant agent accessible via REST API.
     Other ACP clients can discover and interact with Nora at:
 
-        GET  /agents        - Discover Nora
-        POST /runs          - Send a prompt
-        GET  /runs/{id}     - Check run status
+        GET  /ping                        - Health check
+        GET  /agents                      - Discover available agents
+        GET  /agents/{name}               - Get agent manifest
+        POST /runs                        - Create a new run
+        GET  /runs/{run_id}               - Get run status
+        GET  /runs/{run_id}/events        - Stream run events (SSE)
+        POST /runs/{run_id}               - Resume an awaiting run
+        POST /runs/{run_id}/cancel        - Cancel a run
+        GET  /sessions                    - List all sessions
+        POST /sessions                    - Create a new session
+        GET  /sessions/{session_id}       - Get session details
+        GET  /sessions/{session_id}/runs  - List runs for a session
+
+    Open index.html in a browser to view the dashboard UI.
 
     See: https://agentcommunicationprotocol.dev
     """
@@ -90,6 +127,7 @@ def acp(
     console.print(f"   Listening on [bold]http://{host}:{port}[/bold]")
     console.print(f"   Agent manifest: [bold]http://{host}:{port}/agents/nora[/bold]")
     console.print(f"   Health check:   [bold]http://{host}:{port}/ping[/bold]")
+    console.print(f"   Dashboard:      [bold]open index.html in browser[/bold]")
     console.print()
 
     app = create_app(profile=profile)

@@ -2,10 +2,14 @@
 
 Sessions maintain state across multiple Runs in ACP.
 Replaces Nora's Thread model.
+
+Sessions are mode-agnostic — the interaction mode (vibe/plan/act) is a
+per-Run concern, set via `Run.agent_mode`. This allows switching modes
+between runs within the same conversational context.
 """
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -15,8 +19,7 @@ class SessionMetadata(BaseModel):
     """Nora-specific session extensions (not in ACP core spec)."""
 
     name: str = Field(default="", description="Human-readable session name")
-    mode: Literal["vibe", "plan", "act"] = Field(default="vibe", description="Current conversation mode")
-    plan_id: Optional[str] = Field(default=None, description="Associated plan ID for act mode")
+    plan_id: Optional[str] = Field(default=None, description="Associated plan ID (set when a plan run completes)")
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
 
 
@@ -25,7 +28,10 @@ class Session(BaseModel):
 
     Sessions group related Runs together, allowing the agent to maintain
     conversational history across multiple interactions. Each session has
-    a UUID and Nora-specific metadata for mode/name/plan tracking.
+    a UUID and Nora-specific metadata for name/plan tracking.
+
+    The interaction mode (vibe/plan/act) is set per-Run, not per-Session,
+    so you can plan and then act within the same session.
     """
 
     id: UUID = Field(default_factory=uuid4, description="Session identifier")
@@ -33,9 +39,9 @@ class Session(BaseModel):
     metadata: SessionMetadata = Field(default_factory=SessionMetadata, description="Nora-specific extensions")
 
     @classmethod
-    def create(cls, mode: str = "vibe") -> "Session":
+    def create(cls) -> "Session":
         """Create a new session."""
-        return cls(metadata=SessionMetadata(mode=mode))
+        return cls()
 
     def generate_name(self, first_user_text: str) -> str:
         """Generate a name from the first user message content."""
@@ -48,13 +54,3 @@ class Session(BaseModel):
     def name(self) -> str:
         """Get display name."""
         return self.metadata.name or f"Session {str(self.id)[:8]}"
-
-    @property
-    def mode(self) -> str:
-        """Get current mode."""
-        return self.metadata.mode
-
-    @mode.setter
-    def mode(self, value: str) -> None:
-        """Set current mode."""
-        self.metadata.mode = value

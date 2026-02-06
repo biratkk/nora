@@ -10,7 +10,6 @@ from uuid import UUID
 from nora.acp.models.session import Session
 from nora.acp.models.run import Run
 from nora.acp.models.message import AcpMessage
-from nora.config.constants import MODE_CYCLE
 from nora.repositories.session_repository import SessionRepository
 from nora.repositories.run_repository import RunRepository
 
@@ -26,9 +25,9 @@ class SessionService:
         self._session_repo = session_repo or SessionRepository()
         self._run_repo = run_repo or RunRepository()
 
-    def create(self, mode: str = "vibe") -> Session:
+    def create(self) -> Session:
         """Create a new session."""
-        return Session.create(mode=mode)
+        return Session.create()
 
     def save(self, session: Session) -> None:
         """Save a session to disk."""
@@ -73,17 +72,6 @@ class SessionService:
     def get_runs(self, session: Session) -> list[Run]:
         """Get all runs for a session in chronological order."""
         return self._run_repo.list_for_session(session.id)
-
-    def set_mode(self, session: Session, mode: str) -> None:
-        """Set the session mode."""
-        session.metadata.mode = mode
-
-    def cycle_mode(self, session: Session) -> str:
-        """Cycle to the next mode. Returns the new mode."""
-        current_idx = MODE_CYCLE.index(session.mode)
-        new_mode = MODE_CYCLE[(current_idx + 1) % len(MODE_CYCLE)]
-        session.metadata.mode = new_mode
-        return new_mode
 
     def get_last_assistant_text(self, session: Session) -> Optional[str]:
         """Get the text content of the last agent message in the session."""

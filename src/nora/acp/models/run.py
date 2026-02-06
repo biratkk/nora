@@ -6,13 +6,24 @@ See: https://agentcommunicationprotocol.dev/core-concepts/agent-run-lifecycle
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
 from nora.acp.models.error import AcpError
 from nora.acp.models.message import AcpMessage
+
+
+# --- Nora agent mode ---
+
+AgentMode = Literal["vibe", "plan", "act"]
+"""The Nora interaction mode for a run.
+
+- **vibe** — free-form conversation and coding (default).
+- **plan** — research and produce a specification/plan (read-only tools).
+- **act** — execute a plan step-by-step (full tool access).
+"""
 
 
 class RunStatus(str, Enum):
@@ -46,7 +57,15 @@ class RunCreateRequest(BaseModel):
     agent_name: str = Field(..., description="Target agent name")
     input: list[AcpMessage] = Field(..., min_length=1, description="Input messages")
     session_id: Optional[UUID] = Field(default=None, description="Existing session to continue")
-    mode: RunMode = Field(default=RunMode.SYNC, description="Execution mode")
+    mode: RunMode = Field(default=RunMode.SYNC, description="Execution mode (sync, async, stream)")
+    agent_mode: AgentMode = Field(
+        default="vibe",
+        description=(
+            "Nora interaction mode for this run. "
+            "'vibe' for free-form coding, 'plan' for research/specification, "
+            "'act' for executing a plan."
+        ),
+    )
 
 
 class RunResumeRequest(BaseModel):
@@ -61,10 +80,19 @@ class Run(BaseModel):
 
     Each user prompt → agent response cycle in Nora maps to one Run.
     Runs belong to Sessions and track their lifecycle status.
+
+    The `agent_mode` field controls how Nora behaves during this run:
+    - **vibe**: free-form conversation and coding (default)
+    - **plan**: research-only, produces a specification
+    - **act**: executes a plan with full tool access
     """
 
     run_id: UUID = Field(default_factory=uuid4, description="Unique run identifier")
     agent_name: str = Field(..., description="Agent that executed this run")
+    agent_mode: AgentMode = Field(
+        default="vibe",
+        description="Nora interaction mode for this run (vibe, plan, act)",
+    )
     status: RunStatus = Field(default=RunStatus.CREATED, description="Current run status")
     input: list[AcpMessage] = Field(default_factory=list, description="Input messages")
     output: list[AcpMessage] = Field(default_factory=list, description="Output messages")
@@ -80,12 +108,14 @@ class Run(BaseModel):
         agent_name: str,
         input_messages: list[AcpMessage],
         session_id: Optional[UUID] = None,
+        agent_mode: AgentMode = "vibe",
     ) -> "Run":
         """Create a new run in CREATED state."""
         return cls(
             agent_name=agent_name,
             input=input_messages,
             session_id=session_id,
+            agent_mode=agent_mode,
         )
 
     def start(self) -> None:

@@ -1,6 +1,7 @@
-"""Switch thread modal with keyboard navigation and fuzzy search."""
+"""Switch session modal with keyboard navigation and fuzzy search."""
 
 from datetime import datetime
+from typing import Optional
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -9,35 +10,35 @@ from textual.screen import ModalScreen
 from textual.widgets import Static, Input
 from textual.binding import Binding
 
-from nora.models.thread import Thread
-from nora.services.thread_service import ThreadService
+from nora.acp.models.session import Session
+from nora.services.session_service import SessionService
 from nora.utils.fuzzy import fuzzy_filter
 
 
-class ThreadItem(Static):
-    """A selectable thread item."""
+class SessionItem(Static):
+    """A selectable session item."""
     
     DEFAULT_CSS = """
-    ThreadItem {
+    SessionItem {
         width: 100%;
         height: auto;
         padding: 0 1;
     }
-    ThreadItem.selected { background: darkgreen; }
+    SessionItem.selected { background: darkgreen; }
     """
     
-    def __init__(self, thread: Thread) -> None:
-        self.thread = thread
-        date_str = datetime.fromisoformat(thread.created).strftime("%b %d, %Y %H:%M") if thread.created else "Unknown"
-        name = escape(thread.name or thread.id)
+    def __init__(self, session: Session) -> None:
+        self.session = session
+        date_str = session.created_at.strftime("%b %d, %Y %H:%M") if session.created_at else "Unknown"
+        name = escape(session.name or str(session.id)[:8])
         super().__init__(f"[dim]{date_str}:[/dim] {name}")
     
     def on_click(self) -> None:
-        self.screen.dismiss(self.thread)
+        self.screen.dismiss(self.session)
 
 
-class SwitchModal(ModalScreen[Thread | None]):
-    """Modal for switching between threads with fuzzy search."""
+class SwitchModal(ModalScreen[Session | None]):
+    """Modal for switching between sessions with fuzzy search."""
     
     DEFAULT_CSS = """
     SwitchModal { align: center middle; }
@@ -62,74 +63,75 @@ class SwitchModal(ModalScreen[Thread | None]):
     
     def __init__(self) -> None:
         super().__init__()
-        self._thread_service = ThreadService()
-        self.threads: list[Thread] = []
-        self.filtered_threads: list[Thread] = []
+        self._session_service = SessionService()
+        self.sessions: list[Session] = []
+        self.filtered_sessions: list[Session] = []
         self.selected_index = 0
         self.search_query = ""
     
     def compose(self) -> ComposeResult:
         with Container():
             with Container(classes="modal-content"):
-                yield Static("Switch Thread", classes="title")
-                yield Input(placeholder="Type to filter...", classes="search-input", id="thread-search")
-                with VerticalScroll(id="thread-list"):
-                    self.threads = self._thread_service.list_all()
-                    self.filtered_threads = self.threads.copy()
-                    if not self.threads:
-                        yield Static("[dim]No threads[/dim]")
+                yield Static("Switch Session", classes="title")
+                yield Input(placeholder="Type to filter...", classes="search-input", id="session-search")
+                with VerticalScroll(id="session-list"):
+                    self.sessions = self._session_service.list_all()
+                    self.filtered_sessions = self.sessions.copy()
+                    if not self.sessions:
+                        yield Static("[dim]No sessions[/dim]")
                     else:
-                        for i, t in enumerate(self.threads):
-                            item = ThreadItem(t)
+                        for i, s in enumerate(self.sessions):
+                            item = SessionItem(s)
                             if i == 0:
                                 item.add_class("selected")
                             yield item
             yield Static("Type to search  ↑/↓ navigate  Enter select  Esc close", classes="modal-status")
 
-    def _get_thread_search_text(self, thread: Thread) -> str:
-        """Get searchable text for a thread (name + id + all message content)."""
-        parts = [thread.name or '', thread.id]
+    def _get_session_search_text(self, session: Session) -> str:
+        """Get searchable text for a session (name + id + run content)."""
+        parts = [session.name or '', str(session.id)]
         
-        # Include all message content from the thread
-        for msg in thread.messages:
-            if msg.content:
-                parts.append(msg.content)
-            if msg.result:
-                parts.append(msg.result)
-            if msg.tool:
-                parts.append(msg.tool)
+        # Include message content from runs
+        try:
+            history = self._session_service.get_history(session)
+            for msg in history:
+                text = msg.get_text()
+                if text:
+                    parts.append(text)
+        except Exception:
+            pass
         
         return ' '.join(parts)
 
-    def _filter_threads(self) -> None:
-        """Filter threads based on current search query."""
-        self.filtered_threads = fuzzy_filter(
+    def _filter_sessions(self) -> None:
+        """Filter sessions based on current search query."""
+        self.filtered_sessions = fuzzy_filter(
             self.search_query,
-            self.threads,
-            self._get_thread_search_text
+            self.sessions,
+            self._get_session_search_text
         )
         self.selected_index = 0
 
-    async def _refresh_thread_list(self) -> None:
-        """Re-render the thread list after filtering."""
-        scroll = self.query_one("#thread-list", VerticalScroll)
+    async def _refresh_session_list(self) -> None:
+        """Re-render the session list after filtering."""
+        scroll = self.query_one("#session-list", VerticalScroll)
         await scroll.remove_children()
         
-        if not self.filtered_threads:
+        if not self.filtered_sessions:
             await scroll.mount(Static("No matches\n[dim]Press Enter to clear search[/dim]", classes="no-matches"))
         else:
-            for i, thread in enumerate(self.filtered_threads):
-                item = ThreadItem(thread)
+            for i, session in enumerate(self.filtered_sessions):
+                item = SessionItem(session)
                 if i == self.selected_index:
                     item.add_class("selected")
                 await scroll.mount(item)
     
     def _update_selection(self) -> None:
         """Update visual selection highlighting."""
-        if not self.filtered_threads:
+        if not self.filtered_sessions:
             return
         
-        items = list(self.query(ThreadItem))
+        items = list(self.query(SessionItem))
         for i, item in enumerate(items):
             if i == self.selected_index:
                 item.add_class("selected")
@@ -139,37 +141,37 @@ class SwitchModal(ModalScreen[Thread | None]):
 
     def on_mount(self) -> None:
         """Focus search input when modal opens."""
-        self.query_one("#thread-search", Input).focus()
+        self.query_one("#session-search", Input).focus()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         """Handle search input changes."""
-        if event.input.id == "thread-search":
+        if event.input.id == "session-search":
             self.search_query = event.value
-            self._filter_threads()
-            await self._refresh_thread_list()
+            self._filter_sessions()
+            await self._refresh_session_list()
     
     async def on_key(self, event) -> None:
         """Handle keyboard navigation."""
         if event.key in ("up", "ctrl+p"):
-            if self.filtered_threads:
-                self.selected_index = (self.selected_index - 1) % len(self.filtered_threads)
+            if self.filtered_sessions:
+                self.selected_index = (self.selected_index - 1) % len(self.filtered_sessions)
                 self._update_selection()
             event.prevent_default()
         elif event.key in ("down", "ctrl+n"):
-            if self.filtered_threads:
-                self.selected_index = (self.selected_index + 1) % len(self.filtered_threads)
+            if self.filtered_sessions:
+                self.selected_index = (self.selected_index + 1) % len(self.filtered_sessions)
                 self._update_selection()
             event.prevent_default()
         elif event.key == "enter":
-            if not self.filtered_threads:
+            if not self.filtered_sessions:
                 # Clear search when no matches
-                search_input = self.query_one("#thread-search", Input)
+                search_input = self.query_one("#session-search", Input)
                 search_input.value = ""
                 self.search_query = ""
-                self._filter_threads()
-                await self._refresh_thread_list()
-            elif self.filtered_threads and 0 <= self.selected_index < len(self.filtered_threads):
-                self.dismiss(self.filtered_threads[self.selected_index])
+                self._filter_sessions()
+                await self._refresh_session_list()
+            elif self.filtered_sessions and 0 <= self.selected_index < len(self.filtered_sessions):
+                self.dismiss(self.filtered_sessions[self.selected_index])
             event.prevent_default()
     
     def action_close(self) -> None:

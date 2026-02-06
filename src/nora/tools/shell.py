@@ -43,9 +43,10 @@ def run_shell(
     if chaining_error:
         return f"Error: {chaining_error}"
     
-    # Get thread ID from invocation state
+    # Get session/thread ID from invocation state
     invocation_state = getattr(tool_context, "invocation_state", {}) or {}
-    thread_id = invocation_state.get("thread_id", "")
+    # Prefer session_id (ACP-native), fall back to thread_id (legacy)
+    session_id = invocation_state.get("session_id", invocation_state.get("thread_id", ""))
     shell_output_callback = invocation_state.get("shell_output_callback")
     cancel_hook = invocation_state.get("cancel_hook")
     
@@ -59,7 +60,7 @@ def run_shell(
             shell_output_callback(tool_use_id, accumulated)
     
     # Check if command is already trusted
-    if not _trust_service.is_command_trusted(program, args, thread_id):
+    if not _trust_service.is_command_trusted(program, args, session_id):
         # Request user approval via interrupt
         command_display = f"{program} {' '.join(args)}" if args else program
         approval = tool_context.interrupt("shell-confirm", reason={
@@ -67,7 +68,7 @@ def run_shell(
             "args": args,
             "reason": reason,
             "command": command_display,
-            "thread_id": thread_id,
+            "session_id": session_id,
         })
         
         if approval == "reject":

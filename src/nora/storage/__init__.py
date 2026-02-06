@@ -1,37 +1,37 @@
-"""Storage package - backward compatibility shim."""
+"""Storage package - backward compatibility shim.
+
+Legacy functions wrapping ThreadService are preserved for any external
+consumers. New code should use SessionService / RunService directly.
+"""
 
 from nora.models.plan import Plan
 from nora.models.plugin import Plugin, validate_plugin_name
 from nora.repositories.plugin_repository import PluginRepository
 from nora.services.plan_service import PlanService
 from nora.services.plugin_service import PluginService
-from nora.services.thread_service import ThreadService
+from nora.services.session_service import SessionService
 
 # Services for backward compat
-_thread_service = ThreadService()
+_session_service = SessionService()
 _plan_service = PlanService()
 _plugin_service = PluginService()
 _plugin_repo = PluginRepository()
 
 
-def save_thread(thread) -> None:
-    """Save a thread to disk."""
-    _thread_service.save(thread)
+def list_sessions():
+    """List all sessions."""
+    return _session_service.list_all()
 
 
-def load_thread(thread_id: str):
-    """Load a thread by ID."""
-    return _thread_service.load(thread_id)
-
-
+# Legacy aliases
 def list_threads():
-    """List all threads."""
-    return _thread_service.list_all()
+    """List all sessions (legacy alias)."""
+    return list_sessions()
 
 
-def save_plan(thread_id: str, content: str) -> Plan:
+def save_plan(source_id: str, content: str) -> Plan:
     """Save a plan to disk."""
-    return _plan_service._repository.save(thread_id, content)
+    return _plan_service._repository.save(source_id, content)
 
 
 def load_plugins(startup_only: bool = True):
@@ -45,8 +45,7 @@ def save_plugin(plugin: Plugin):
 
 
 __all__ = [
-    "save_thread",
-    "load_thread",
+    "list_sessions",
     "list_threads",
     "save_plan",
     "Plan",

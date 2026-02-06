@@ -164,9 +164,37 @@ def search_files(pattern: str, path: str = ".") -> str:
     
     MAX_LINES = 200
     
+    # Build exclude flags from .gitignore patterns
+    cwd = Path.cwd()
+    exclude_dirs = [".git"]
+    exclude_files = []
+    
+    gitignore_path = cwd / ".gitignore"
+    if gitignore_path.exists():
+        for line in gitignore_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Strip trailing slashes to get the name
+            clean = line.rstrip("/")
+            if line.endswith("/"):
+                # Directory pattern
+                exclude_dirs.append(clean)
+            else:
+                # Could be file or dir — exclude as both
+                exclude_dirs.append(clean)
+                exclude_files.append(clean)
+    
     try:
+        cmd = ["grep", "-rn"]
+        for d in exclude_dirs:
+            cmd.extend(["--exclude-dir", d])
+        for f in exclude_files:
+            cmd.extend(["--exclude", f])
+        cmd.extend([pattern, path])
+        
         result = subprocess.run(
-            ["grep", "-rn", "--exclude-dir=.git", pattern, path],
+            cmd,
             capture_output=True,
             text=True,
             timeout=30

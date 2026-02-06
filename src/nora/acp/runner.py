@@ -93,9 +93,11 @@ class AcpRunner:
             agent = self._agent_service.create_agent(
                 messages=strands_history,
                 profile=self._profile,
-                mode=session.mode,
+                mode=run.agent_mode,
                 hooks=[cancel_hook],
             )
+            # Track message count before this run so we only save NEW messages
+            messages_before_run = len(agent.messages)
 
             # Collect streaming content
             output_chunks: list[str] = []
@@ -195,7 +197,7 @@ class AcpRunner:
             run.complete(output_messages)
 
             # Save run + strands sidecar
-            self._run_repo.save(run, list(agent.messages))
+            self._run_repo.save(run, list(agent.messages[messages_before_run:]))
 
             # Update session
             session.metadata.updated_at = datetime.now()

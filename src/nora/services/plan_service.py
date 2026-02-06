@@ -1,9 +1,10 @@
 """Service for plan management."""
 
-from typing import Optional, List
+from typing import Optional, List, Union
 
 from nora.models.plan import Plan
 from nora.models.thread import Thread
+from nora.acp.models.session import Session
 from nora.repositories.plan_repository import PlanRepository
 
 
@@ -37,6 +38,19 @@ class PlanService:
         """
         return self._repository.save(thread.id, content)
     
+    def create_from_session(self, session: Session, content: str) -> Plan:
+        """
+        Create a plan from session content.
+        
+        Args:
+            session: Source session.
+            content: Plan content in markdown.
+            
+        Returns:
+            Created Plan instance.
+        """
+        return self._repository.save(str(session.id), content)
+    
     def save_and_link(self, thread: Thread, content: str) -> Plan:
         """
         Save a plan and link it to the thread.
@@ -53,6 +67,24 @@ class PlanService:
         plan = self.create_from_thread(thread, content)
         thread.plan_id = plan.id
         thread.mode = "act"
+        return plan
+    
+    def save_and_link_session(self, session: Session, content: str) -> Plan:
+        """
+        Save a plan and link it to the session.
+        
+        Updates the session's plan_id. The caller is responsible for
+        switching to 'act' mode on the next run.
+        
+        Args:
+            session: Session to link.
+            content: Plan content.
+            
+        Returns:
+            Created Plan instance.
+        """
+        plan = self.create_from_session(session, content)
+        session.metadata.plan_id = plan.id
         return plan
     
     def load(self, plan_id: str) -> Optional[Plan]:

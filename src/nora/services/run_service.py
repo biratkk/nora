@@ -25,12 +25,14 @@ class RunService:
         agent_name: str,
         input_messages: list[AcpMessage],
         session_id: UUID,
+        agent_mode: str = "vibe",
     ) -> Run:
         """Create a new Run in CREATED state."""
         return Run.create(
             agent_name=agent_name,
             input_messages=input_messages,
             session_id=session_id,
+            agent_mode=agent_mode,
         )
 
     def start(self, run: Run) -> None:

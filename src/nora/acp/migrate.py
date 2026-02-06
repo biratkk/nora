@@ -65,18 +65,17 @@ def _migrate_single_thread(
     messages = thread_data.get("messages", [])
     raw_messages = thread_data.get("raw_messages", [])
 
-    # Create session
+    # Create session (mode-agnostic — mode lives on runs now)
     session = Session(
         metadata=SessionMetadata(
             name=thread_name,
-            mode=thread_mode,
             plan_id=thread_plan_id,
             updated_at=None,
         ),
     )
 
-    # Group messages into runs (each user→assistant pair = 1 run)
-    runs = _group_messages_into_runs(messages, session.id)
+    # Group messages into runs — each inherits the thread's mode
+    runs = _group_messages_into_runs(messages, session.id, agent_mode=thread_mode)
 
     # Save session
     session_repo.save(session)
@@ -96,12 +95,15 @@ def _migrate_single_thread(
 def _group_messages_into_runs(
     messages: list[dict[str, Any]],
     session_id: Any,
+    agent_mode: str = "vibe",
 ) -> list[Run]:
     """Group legacy messages into ACP runs.
 
     Strategy: each user message starts a new run. All subsequent
     assistant/tool_call/shell messages belong to that run's output
     until the next user message.
+
+    All migrated runs inherit the thread's mode as their agent_mode.
     """
     runs: list[Run] = []
     current_input: list[AcpMessage] = []
@@ -116,6 +118,7 @@ def _group_messages_into_runs(
             if current_input:
                 run = Run(
                     agent_name="nora",
+                    agent_mode=agent_mode,
                     status=RunStatus.COMPLETED,
                     input=current_input,
                     output=current_output,
@@ -156,6 +159,7 @@ def _group_messages_into_runs(
     if current_input:
         run = Run(
             agent_name="nora",
+            agent_mode=agent_mode,
             status=RunStatus.COMPLETED,
             input=current_input,
             output=current_output,

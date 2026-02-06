@@ -10,11 +10,13 @@ from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Static
 from thefuzz import fuzz
 
-from nora.models import Thread, Message
-from nora.models.thread import Mode
+from nora.acp.models.session import Session
+from nora.acp.models.message import AcpMessage, TrajectoryMetadata
+from nora.acp.models.run import Run, RunStatus
 from nora.config.constants import DEFAULT_MODEL_ID, MODE_CYCLE
 from nora.services.settings_service import SettingsService
-from nora.services.thread_service import ThreadService
+from nora.services.session_service import SessionService
+from nora.services.run_service import RunService
 from nora.services.plugin_service import PluginService
 from nora.services.plan_service import PlanService
 from nora.services.agent_service import AgentService, CancellationHook
@@ -68,23 +70,25 @@ class ChatApp(App):
     ]
     ENABLE_COMMAND_PALETTE = False
 
-    def __init__(self, thread: Thread, profile: Optional[str] = None):
+    def __init__(self, session: Session, profile: Optional[str] = None):
         super().__init__()
-        self.thread = thread
+        self.session = session
         self.profile = profile
         
         # Services
-        self._thread_service = ThreadService()
+        self._session_service = SessionService()
+        self._run_service = RunService()
         self._plugin_service = PluginService()
         self._plan_service = PlanService()
         self._agent_service = AgentService()
         
         # State
         self.agent = None
+        self._agent_mode = "vibe"  # Agent mode for next run (vibe/plan/act)
         self._ac_trigger: Optional[str] = None
         self._ac_pos: int = 0
         self._ctrl_c_pressed = False
-        self._current_model = DEFAULT_MODEL_ID
+        self._agent_model = DEFAULT_MODEL_ID
         self._processing = False
         self._current_worker = None
         self._cancel_hook = CancellationHook()
@@ -98,7 +102,7 @@ class ChatApp(App):
             with Container(id="input-container"):
                 yield MarkdownInput(placeholder="Type a message... (@file /cmd)", id="input")
         with Horizontal(id="status-bar"):
-            yield Static(f" {self.thread.mode.upper()} ", id="mode-indicator", classes=f"mode-{self.thread.mode}")
+            yield Static(f" {self._agent_mode.upper()} ", id="mode-indicator", classes=f"mode-{self._agent_mode}")
             yield Static(f" {self._agent_service.get_model_name()} ", id="model-name")
             yield Static("", id="status-spacer")
             yield Static("@file  /cmd  Esc quit", id="status-keys")
@@ -152,66 +156,101 @@ class ChatApp(App):
         self._init_agent()
         # Set initial input container border color
         input_container = self.query_one("#input-container", Container)
-        input_container.styles.border_left = ("solid", MODE_COLORS[self.thread.mode])
+        input_container.styles.border_left = ("solid", MODE_COLORS[self._agent_mode])
         
         chat = self.query_one("#chat", VerticalScroll)
         
-        tool_block = None
-        for msg in self.thread.messages:
-            if msg.role == "tool_call":
-                if tool_block is None:
-                    tool_block = ToolCallBlock()
-                    chat.mount(tool_block)
-                tool_block.add_tool(msg.tool or "", msg.parameters or {}, finished=True)
-            elif msg.role == "shell":
-                tool_block = None
-                chat.mount(ShellMessage(msg.content or "", msg.output or ""))
-            else:
-                tool_block = None
-                chat.mount(ChatMessage(msg.role, msg.content or ""))
+        # Render chat history from session runs
+        self._render_session_history(chat)
+        
         chat.scroll_end(animate=False)
         self.query_one("#input", MarkdownInput).focus()
         self.query_one("#autocomplete", AutocompleteWidget).cache_files()
+
+    def _render_session_history(self, chat: VerticalScroll) -> None:
+        """Render all messages from session runs into the chat widget."""
+        runs = self._session_service.get_runs(self.session)
+        
+        for run in runs:
+            # Render input messages
+            for msg in run.input:
+                self._render_acp_message(chat, msg)
+            
+            # Render output messages
+            tool_block = None
+            for msg in run.output:
+                if msg.has_trajectory():
+                    # Tool trajectory messages
+                    for part in msg.parts:
+                        if isinstance(part.metadata, TrajectoryMetadata):
+                            if tool_block is None:
+                                tool_block = ToolCallBlock()
+                                chat.mount(tool_block)
+                            tool_block.add_tool(
+                                part.metadata.tool_name or "",
+                                part.metadata.tool_input or {},
+                                finished=True
+                            )
+                elif msg.is_displayable():
+                    tool_block = None
+                    text = msg.get_text()
+                    if text and msg.role.startswith("agent"):
+                        chat.mount(ChatMessage("assistant", text))
+                    elif text and msg.role == "user":
+                        chat.mount(ChatMessage("user", text))
+
+    def _render_acp_message(self, chat: VerticalScroll, msg: AcpMessage) -> None:
+        """Render a single AcpMessage into the chat widget."""
+        if msg.is_shell():
+            # Shell passthrough message
+            command = ""
+            output = ""
+            for part in msg.parts:
+                if part.content_type == "application/x-nora-shell":
+                    command = part.content or ""
+                    if hasattr(part.metadata, 'output'):
+                        output = part.metadata.output or ""
+            chat.mount(ShellMessage(command, output))
+        elif msg.role == "user":
+            text = msg.get_text()
+            if text:
+                chat.mount(ChatMessage("user", text))
+        elif msg.role.startswith("agent"):
+            if msg.is_displayable():
+                text = msg.get_text()
+                if text:
+                    chat.mount(ChatMessage("assistant", text))
 
     def _load_plugins(self) -> None:
         """Load plugins from $CWD/.nora/plugins/."""
         self._plugin_service.load_all(startup_only=True)
 
     def _init_agent(self) -> None:
-        messages = self.thread.to_agent_messages()
+        messages = self._session_service.get_strands_history(self.session)
         self.agent = self._agent_service.create_agent(
             messages, 
             self.profile, 
-            self.thread.mode, 
-            self._current_model, 
+            self._agent_mode, 
+            self._agent_model, 
             hooks=[self._cancel_hook]
         )
 
     def _on_model_selected(self, model_id: str | None) -> None:
         if model_id:
-            self._current_model = model_id
+            self._agent_model = model_id
             self._init_agent()
             self.query_one("#model-name", Static).update(f" {self._agent_service.get_model_name(model_id)} ")
 
-    def _on_thread_selected(self, thread: Thread | None) -> None:
-        if thread is None:
+    def _on_session_selected(self, session: Session | None) -> None:
+        if session is None:
             return
-        self.thread = thread
+        self.session = session
+        # Infer mode from the last run in this session, default to vibe
+        runs = self._session_service.get_runs(session)
+        self._agent_mode = runs[-1].agent_mode if runs else "vibe"
         chat = self.query_one("#chat", VerticalScroll)
         chat.remove_children()
-        tool_block = None
-        for msg in self.thread.messages:
-            if msg.role == "tool_call":
-                if tool_block is None:
-                    tool_block = ToolCallBlock()
-                    chat.mount(tool_block)
-                tool_block.add_tool(msg.tool or "", msg.parameters or {}, finished=True)
-            elif msg.role == "shell":
-                tool_block = None
-                chat.mount(ShellMessage(msg.content or "", msg.output or ""))
-            else:
-                tool_block = None
-                chat.mount(ChatMessage(msg.role, msg.content or ""))
+        self._render_session_history(chat)
         chat.scroll_end(animate=False)
         self._update_status_bar()
         self._init_agent()
@@ -225,38 +264,42 @@ class ChatApp(App):
             self._load_plugins()
             self._init_agent()
 
-    def _start_new_thread(self) -> None:
-        self.thread = Thread.create()
+    def _start_new_session(self) -> None:
+        self.session = Session.create()
+        self._agent_mode = "vibe"
+        self._session_service.save(self.session)
         chat = self.query_one("#chat", VerticalScroll)
         chat.remove_children()
+        self._update_status_bar()
         self._init_agent()
 
     def _update_status_bar(self) -> None:
         indicator = self.query_one("#mode-indicator", Static)
-        indicator.update(f" {self.thread.mode.upper()} ")
+        indicator.update(f" {self._agent_mode.upper()} ")
         for mode in MODE_CYCLE:
             indicator.remove_class(f"mode-{mode}")
-        indicator.add_class(f"mode-{self.thread.mode}")
+        indicator.add_class(f"mode-{self._agent_mode}")
         # Update input container border color
         input_container = self.query_one("#input-container", Container)
-        input_container.styles.border_left = ("solid", MODE_COLORS[self.thread.mode])
+        input_container.styles.border_left = ("solid", MODE_COLORS[self._agent_mode])
 
     def action_cycle_mode(self) -> None:
-        self._thread_service.cycle_mode(self.thread)
+        current_idx = MODE_CYCLE.index(self._agent_mode)
+        self._agent_mode = MODE_CYCLE[(current_idx + 1) % len(MODE_CYCLE)]
         self._update_status_bar()
         self._init_agent()
-        self._thread_service.save(self.thread)
 
     def action_execute_plan(self) -> None:
-        if self.thread.mode != "plan":
+        if self._agent_mode != "plan":
             return
-        plan_content = self._thread_service.get_last_assistant_message(self.thread)
+        plan_content = self._session_service.get_last_assistant_text(self.session)
         if not plan_content:
             return
-        plan = self._plan_service.save_and_link(self.thread, plan_content)
+        plan = self._plan_service.save_and_link_session(self.session, plan_content)
+        self._agent_mode = "act"
         self._update_status_bar()
         self._init_agent()
-        self._thread_service.save(self.thread)
+        self._session_service.save(self.session)
         self._set_processing(True)
         self._current_worker = self.run_worker(
             self._send_message(self._plan_service.get_implementation_prompt(plan)), 
@@ -267,7 +310,6 @@ class ChatApp(App):
         chat = self.query_one("#chat", VerticalScroll)
         chat.mount(ChatMessage("user", text))
         chat.scroll_end()
-        self.thread.messages.append(Message(role="user", content=text))
         await self._fetch_response(text)
 
     def _get_current_word(self, text: str, cursor: int) -> str:
@@ -359,7 +401,7 @@ class ChatApp(App):
         if event.shell_mode:
             input_container.styles.border_left = ("solid", "red")
         else:
-            input_container.styles.border_left = ("solid", MODE_COLORS[self.thread.mode])
+            input_container.styles.border_left = ("solid", MODE_COLORS[self._agent_mode])
 
     async def on_markdown_input_submitted(self, event: MarkdownInput.Submitted) -> None:
         text = event.value.strip()
@@ -376,13 +418,13 @@ class ChatApp(App):
             self.exit()
             return
         if text == "/new":
-            self._start_new_thread()
+            self._start_new_session()
             return
         if text == "/model":
-            self.push_screen(ModelSelectorModal(self._current_model), self._on_model_selected)
+            self.push_screen(ModelSelectorModal(self._agent_model), self._on_model_selected)
             return
         if text == "/switch":
-            self.push_screen(SwitchModal(), self._on_thread_selected)
+            self.push_screen(SwitchModal(), self._on_session_selected)
             return
         if text == "/add-plugin":
             self.push_screen(AddPluginModal(profile=self.profile), self._on_plugin_created)
@@ -394,9 +436,6 @@ class ChatApp(App):
         # If plugins matched, inject them BEFORE the user's message
         if matched_plugins:
             enhanced_text = self._plugin_service.enhance_prompt(text, matched_plugins)
-            
-            # Add user message to thread (with enhanced context)
-            self.thread.messages.append(Message(role="user", content=enhanced_text))
             
             # Display only the original text in chat (not the plugin details)
             chat = self.query_one("#chat", VerticalScroll)
@@ -412,7 +451,6 @@ class ChatApp(App):
             chat.mount(ChatMessage("user", text))
             chat.scroll_end()
             
-            self.thread.messages.append(Message(role="user", content=text))
             self._set_processing(True)
             self._current_worker = self.run_worker(self._fetch_response(text), exclusive=True)
 
@@ -422,6 +460,7 @@ class ChatApp(App):
         
         Uses asyncio subprocess to avoid blocking the event loop,
         streaming output line-by-line to the ShellMessage widget.
+        Saves the command as an AcpMessage.shell() in a Run.
         
         Args:
             command: Shell command to execute (without ! prefix).
@@ -449,26 +488,36 @@ class ChatApp(App):
             shell_msg.update_output(output.rstrip())
             chat.scroll_end()
         
-        # Save to thread history (NOT to agent context)
-        self.thread.messages.append(Message(
-            role="shell",
-            content=command,
-            output=output.rstrip() if output else ""
-        ))
-        self._thread_service.save(self.thread)
+        # Save as an AcpMessage.shell() in a Run
+        shell_message = AcpMessage.shell(command, output.rstrip() if output else "")
+        run = self._run_service.create("nora", [shell_message], self.session.id)
+        run.start()
+        run.complete([])  # Shell passthrough has no agent output
+        self._run_service.save(run)
+        
+        # Update session
+        if not self.session.metadata.name or self.session.name.startswith("Session "):
+            self.session.generate_name(f"! {command}")
+        self._session_service.save(self.session)
 
     async def _fetch_response(self, prompt: str) -> None:
         chat = self.query_one("#chat", VerticalScroll)
         chat_container = self.query_one("#chat-container", Container)
-        loading = LoadingWidget(message="Thinking", style="bar", color=MODE_COLORS[self.thread.mode])
+        loading = LoadingWidget(message="Thinking", style="bar", color=MODE_COLORS[self._agent_mode])
         chat_container.mount(loading)
         chat.scroll_end()
+
+        # Create a Run for this prompt/response cycle
+        input_message = AcpMessage.user(prompt)
+        run = self._run_service.create("nora", [input_message], self.session.id)
+        self._run_service.start(run)
 
         current_content = []
         tool_block = None
         subagent_blocks: dict[str, SubagentBlock] = {}
         shell_blocks: dict[str, ShellBlock] = {}
         indicator_blocks: dict[str, ToolIndicator] = {}
+        run_output: list[AcpMessage] = []
 
         def on_subagent_stream(tool_use_id: str, **kwargs):
             subagent = subagent_blocks.get(tool_use_id)
@@ -546,7 +595,7 @@ class ChatApp(App):
                         if "toolUse" in block:
                             if current_content:
                                 text = "".join(current_content)
-                                self.thread.messages.append(Message(role="assistant", content=text))
+                                run_output.append(AcpMessage.agent(text))
                                 self.call_from_thread(chat.mount, ChatMessage("assistant", text))
                                 current_content = []
                             
@@ -554,6 +603,13 @@ class ChatApp(App):
                             tool_name = tu["name"]
                             tool_use_id = tu.get("toolUseId")
                             tool_input = tu.get("input", {})
+                            
+                            # Record tool trajectory
+                            run_output.append(AcpMessage.tool_trajectory(
+                                tool_name=tool_name,
+                                tool_input=tool_input,
+                                tool_output="",
+                            ))
                             
                             if tool_name == "Subagent":
                                 subagent_reason = tool_input.get("reason", "Running subagent.")
@@ -582,11 +638,6 @@ class ChatApp(App):
                                 self.call_from_thread(tool_block.mount, indicator)
                             
                             self.call_from_thread(chat.scroll_end)
-                            self.thread.messages.append(Message(
-                                role="tool_call",
-                                tool=tool_name,
-                                parameters=tool_input
-                            ))
 
             if "data" in kwargs:
                 tool_block = None
@@ -600,10 +651,18 @@ class ChatApp(App):
                 self.call_from_thread(chat.scroll_end)
 
         self.agent.callback_handler = on_stream
-        invocation_state = {"subagent_callback": on_subagent_stream, "shell_output_callback": on_shell_output, "profile": self.profile, "cancel_hook": self._cancel_hook, "thread_id": self.thread.id}
+        invocation_state = {
+            "subagent_callback": on_subagent_stream,
+            "shell_output_callback": on_shell_output,
+            "profile": self.profile,
+            "cancel_hook": self._cancel_hook,
+            "session_id": str(self.session.id),
+        }
         loop = asyncio.get_event_loop()
         rejected = False
         cancelled = False
+        # Track message count before this run so we only save NEW messages
+        messages_before_run = len(self.agent.messages)
 
         def mark_last_tool_failed():
             indicators = chat.query(ToolIndicator)
@@ -654,22 +713,36 @@ class ChatApp(App):
 
         if cancelled or self._cancel_hook.cancelled:
             # Clear interrupt state so next message can be a regular string prompt
-            # Note: agent.messages (conversation history) is preserved, only interrupt tracking is cleared
             self.agent._interrupt_state.deactivate()
+            # Save run as cancelled
+            self._run_service.cancel(run)
+            self._run_service.confirm_cancel(run)
+            self._run_service.save(run, list(self.agent.messages[messages_before_run:]))
         elif rejected:
             # Clear interrupt state so next message can be a regular string prompt
-            # Note: agent.messages (conversation history) is preserved, only interrupt tracking is cleared
             self.agent._interrupt_state.deactivate()
+            # Save run as completed with whatever output we have
+            if current_content:
+                text = "".join(current_content)
+                run_output.append(AcpMessage.agent(text))
+                chat.mount(ChatMessage("assistant", text))
+                chat.scroll_end()
+            self._run_service.complete(run, run_output)
+            self._run_service.save(run, list(self.agent.messages[messages_before_run:]))
         else:
             if current_content:
                 text = "".join(current_content)
-                self.thread.messages.append(Message(role="assistant", content=text))
+                run_output.append(AcpMessage.agent(text))
                 chat.mount(ChatMessage("assistant", text))
                 chat.scroll_end()
+            # Complete the run with all output
+            self._run_service.complete(run, run_output)
+            self._run_service.save(run, list(self.agent.messages[messages_before_run:]))
         
-        # Sync raw agent messages to preserve toolUse/toolResult structure for session restore
-        self.thread.raw_messages = list(self.agent.messages)
-        self._thread_service.save(self.thread)
+        # Update session metadata
+        if not self.session.metadata.name or self.session.name.startswith("Session "):
+            self.session.generate_name(prompt)
+        self._session_service.save(self.session)
         self._set_processing(False)
 
     async def _get_confirmation(self, name: str, reason: dict) -> str:
@@ -689,7 +762,7 @@ class ChatApp(App):
         while the command runs after approval.
         
         Args:
-            reason: Dict containing program, args, reason, command, thread_id.
+            reason: Dict containing program, args, reason, command, session_id.
             
         Returns:
             Command output or rejection message.
@@ -697,7 +770,7 @@ class ChatApp(App):
         program = reason["program"]
         args = reason["args"]
         cmd_reason = reason["reason"]
-        thread_id = reason.get("thread_id", self.thread.id)
+        session_id = reason.get("session_id", str(self.session.id))
         
         # Show initial approval modal
         decision = await self.push_screen_wait(
@@ -733,7 +806,7 @@ class ChatApp(App):
             TrustDecision.TRUST_PERMANENT if decision == "t" 
             else TrustDecision.TRUST_SESSION
         )
-        trust_service.save_policy(program, selected_level, trust_decision, thread_id)
+        trust_service.save_policy(program, selected_level, trust_decision, session_id)
         
         # Execute the command asynchronously
         result = await async_execute_command(
@@ -750,5 +823,5 @@ class ChatApp(App):
         chat.scroll_end()
 
 
-def run_tui(thread: Thread, profile: Optional[str] = None) -> None:
-    ChatApp(thread, profile).run()
+def run_tui(session: Session, profile: Optional[str] = None) -> None:
+    ChatApp(session, profile).run()

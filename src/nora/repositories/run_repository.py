@@ -109,7 +109,96 @@ class RunRepository:
             strands_msgs = self.load_strands_messages(session_id, run.run_id)
             if strands_msgs:
                 all_messages.extend(strands_msgs)
-        return all_messages
+        return self._validate_tool_pairing(all_messages)
+
+    @staticmethod
+    def _validate_tool_pairing(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Validate and repair toolUse/toolResult pairing in message history.
+
+        Bedrock requires:
+        1. Every toolUse in an assistant message must have a corresponding toolResult
+           in the immediately following user message.
+        2. Every toolResult must reference a toolUse from the preceding assistant message.
+
+        This can get out of sync due to cancelled runs or save bugs. We fix both:
+        - Orphaned toolResults (no matching toolUse) are dropped.
+        - Dangling toolUse blocks (no matching toolResult) get a synthetic error
+          toolResult injected before the next message.
+        """
+        if not messages:
+            return messages
+
+        pending_tool_use_ids: list[str] = []  # ordered list of unanswered toolUse IDs
+        repaired: list[dict[str, Any]] = []
+
+        def _flush_pending() -> None:
+            """Inject synthetic toolResult for any unanswered toolUse blocks."""
+            if not pending_tool_use_ids:
+                return
+            synthetic_results = [
+                {
+                    "toolResult": {
+                        "toolUseId": tid,
+                        "status": "error",
+                        "content": [{"text": "Tool execution was interrupted."}],
+                    }
+                }
+                for tid in pending_tool_use_ids
+            ]
+            repaired.append({"role": "user", "content": synthetic_results})
+            pending_tool_use_ids.clear()
+
+        for msg in messages:
+            role = msg.get("role")
+            content = msg.get("content", [])
+
+            if role == "assistant":
+                # Before adding a new assistant message, flush any pending toolUse
+                # IDs from the previous assistant that were never answered.
+                _flush_pending()
+
+                # Register new toolUse IDs
+                for block in content:
+                    if isinstance(block, dict) and "toolUse" in block:
+                        tool_use_id = block["toolUse"].get("toolUseId", "")
+                        if tool_use_id:
+                            pending_tool_use_ids.append(tool_use_id)
+                repaired.append(msg)
+
+            elif role == "user":
+                has_tool_results = any(
+                    isinstance(b, dict) and "toolResult" in b for b in content
+                )
+
+                if has_tool_results:
+                    # Build a set of currently pending IDs for fast lookup
+                    pending_set = set(pending_tool_use_ids)
+                    filtered_content = []
+                    for block in content:
+                        if isinstance(block, dict) and "toolResult" in block:
+                            tr_id = block["toolResult"].get("toolUseId", "")
+                            if tr_id in pending_set:
+                                pending_set.discard(tr_id)
+                                pending_tool_use_ids.remove(tr_id)
+                                filtered_content.append(block)
+                            # else: orphaned toolResult, drop it
+                        else:
+                            filtered_content.append(block)
+
+                    if not filtered_content:
+                        # All content was orphaned; skip this message entirely
+                        continue
+                    msg = {**msg, "content": filtered_content}
+
+                repaired.append(msg)
+            else:
+                _flush_pending()
+                repaired.append(msg)
+
+        # Flush any trailing unanswered toolUse blocks
+        _flush_pending()
+
+        return repaired
 
     def delete(self, session_id: UUID, run_id: UUID) -> bool:
         """Delete a run and its strands sidecar."""
