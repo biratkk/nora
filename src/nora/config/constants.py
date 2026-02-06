@@ -7,6 +7,7 @@ NORA_DIR_NAME: Final[str] = ".nora"
 SETTINGS_FILENAME: Final[str] = "settings.json"
 MODES_DIR_NAME: Final[str] = "modes"
 THREADS_DIR_NAME: Final[str] = "threads"
+SESSIONS_DIR_NAME: Final[str] = "sessions"
 PLANS_DIR_NAME: Final[str] = "plans"
 PLUGINS_DIR_NAME: Final[str] = "plugins"
 

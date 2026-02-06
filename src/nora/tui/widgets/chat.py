@@ -41,6 +41,7 @@ class ShellMessage(Container):
     Displays a shell passthrough command and its output.
 
     Shows the command prefixed with ! and output below.
+    Supports incremental output updates via update_output().
     """
 
     DEFAULT_CSS = """
@@ -62,15 +63,34 @@ class ShellMessage(Container):
     }
     """
 
-    def __init__(self, command: str, output: str) -> None:
+    def __init__(self, command: str, output: str = "") -> None:
         super().__init__()
         self.command = command
         self.output = output
+        self._output_widget: Static | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(f"[red]! {self.command}[/red]", classes="shell-command")
         if self.output:
-            yield Static(self.output, classes="shell-output")
+            self._output_widget = Static(self.output, classes="shell-output", markup=False)
+            yield self._output_widget
+
+    def update_output(self, output: str) -> None:
+        """
+        Update the displayed output incrementally.
+        
+        Creates the output widget if it doesn't exist yet,
+        or updates the existing one.
+        
+        Args:
+            output: The accumulated output text to display.
+        """
+        self.output = output
+        if self._output_widget is None:
+            self._output_widget = Static(output, classes="shell-output", markup=False)
+            self.mount(self._output_widget)
+        else:
+            self._output_widget.update(output)
 
 
 class ToolCallBlock(Container):

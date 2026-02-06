@@ -6,15 +6,18 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "docstring-parser>=0.17.0",
+    "fastapi>=0.115.0",
     "pathspec>=0.12.0",
     "pyyaml>=6.0.0",
     "rapidfuzz>=3.5.0",
     "rich>=14.2.0",
+    "sse-starlette>=2.0.0",
     "strands-agents>=1.21.0",
     "textual>=3.0.0",
     "textual-keys>=1.2.0",
     "thefuzz>=0.22.0",
     "typer>=0.21.1",
+    "uvicorn[standard]>=0.34.0",
 ]
 
 [project.scripts]

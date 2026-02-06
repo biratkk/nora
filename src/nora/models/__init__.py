@@ -1,5 +1,11 @@
-"""Models package."""
+"""Models package.
 
+Provides both legacy Nora models and new ACP-aligned models.
+Legacy imports (Thread, Message) continue to work for backward compatibility.
+New code should prefer ACP models from nora.acp.models.
+"""
+
+# Legacy models (backward compat)
 from nora.models.message import Message, MessageRole
 from nora.models.thread import Thread, Mode
 from nora.models.plugin import Plugin, validate_plugin_name
@@ -8,9 +14,23 @@ from nora.models.settings import Settings
 from nora.models.autocomplete import AutocompleteItem
 from nora.models.trust_policy import TrustPolicyFile, Policy
 
+# ACP models (new)
+from nora.acp.models import (
+    AcpMessage,
+    MessagePart,
+    Run,
+    RunStatus,
+    RunMode,
+    Session,
+    SessionMetadata,
+    AgentManifest,
+    AcpError,
+)
+
 __all__ = [
+    # Legacy
     "Message",
-    "MessageRole", 
+    "MessageRole",
     "Thread",
     "Mode",
     "Plugin",
@@ -20,4 +40,14 @@ __all__ = [
     "AutocompleteItem",
     "TrustPolicyFile",
     "Policy",
+    # ACP
+    "AcpMessage",
+    "MessagePart",
+    "Run",
+    "RunStatus",
+    "RunMode",
+    "Session",
+    "SessionMetadata",
+    "AgentManifest",
+    "AcpError",
 ]

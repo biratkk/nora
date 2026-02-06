@@ -64,6 +64,68 @@ def chat(
     run_tui(thread, effective_profile)
 
 
+@app.command()
+def acp(
+    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to listen on"),
+    profile: Optional[str] = typer.Option(None, "--profile", help="AWS profile name"),
+) -> None:
+    """Start the ACP (Agent Communication Protocol) server.
+
+    Exposes Nora as an ACP-compliant agent accessible via REST API.
+    Other ACP clients can discover and interact with Nora at:
+
+        GET  /agents        - Discover Nora
+        POST /runs          - Send a prompt
+        GET  /runs/{id}     - Check run status
+
+    See: https://agentcommunicationprotocol.dev
+    """
+    import uvicorn
+    from nora.acp.server import create_app
+
+    console = Console()
+    console.print(f"\n[bold cyan]🚀 Nora ACP Server[/bold cyan]")
+    console.print(f"   Agent Communication Protocol v0.2.0")
+    console.print(f"   Listening on [bold]http://{host}:{port}[/bold]")
+    console.print(f"   Agent manifest: [bold]http://{host}:{port}/agents/nora[/bold]")
+    console.print(f"   Health check:   [bold]http://{host}:{port}/ping[/bold]")
+    console.print()
+
+    app = create_app(profile=profile)
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+@app.command()
+def manifest() -> None:
+    """Print Nora's ACP agent manifest as JSON."""
+    from nora.acp.models.agent_manifest import get_nora_manifest
+
+    console = Console()
+    manifest = get_nora_manifest()
+    console.print_json(manifest.model_dump_json(indent=2))
+
+
+@app.command()
+def migrate() -> None:
+    """Migrate legacy thread files to ACP session format.
+
+    Converts $CWD/.nora/threads/thread_*.json files to
+    $CWD/.nora/sessions/<uuid>/ directory structure.
+    """
+    from nora.acp.migrate import migrate_threads
+
+    console = Console()
+    console.print("[bold]Migrating legacy threads to ACP sessions...[/bold]")
+    stats = migrate_threads()
+    console.print(f"  [green]✓[/green] Migrated: {stats['migrated']}")
+    console.print(f"  [yellow]⚠[/yellow] Skipped:  {stats['skipped']}")
+    console.print(f"  [red]✗[/red] Errors:   {stats['errors']}")
+    if stats['migrated'] > 0:
+        console.print(f"\n  Sessions stored in [bold].nora/sessions/[/bold]")
+        console.print(f"  Original threads preserved in [bold].nora/threads/[/bold]")
+
+
 def main() -> None:
     """Main entry point."""
     from nora.services.settings_service import SettingsService

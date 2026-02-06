@@ -1,7 +1,6 @@
 """Main TUI application."""
 
 import asyncio
-import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -22,7 +21,7 @@ from nora.services.agent_service import AgentService, CancellationHook
 from nora.widgets import ChatMessage, ToolCallBlock, ToolIndicator, SubagentBlock, ShellBlock, ShellMessage, AutocompleteWidget, LoadingWidget, MarkdownInput
 from nora.screens import ToolConfirmModal, ModelSelectorModal, DiffModal, SwitchModal, AddPluginModal, ShellApprovalModal, TrustLevelModal
 from nora.services.trust_service import TrustService, TrustDecision
-from nora.tools.shell import execute_shell_after_approval
+from nora.tools.shell import async_execute_command, async_execute_shell_command
 
 MODE_COLORS = {"vibe": "cyan", "plan": "yellow", "act": "green"}
 
@@ -42,8 +41,9 @@ class ChatApp(App):
     .message-content { margin: 0; padding: 0; }
     .message-time { dock: right; width: auto; }
     Markdown { margin: 0; padding: 0; }
-    MarkdownBlock { margin: 0; padding: 0; }
-    .message-assistant MarkdownParagraph:last-child { margin: 0; }
+    MarkdownBlock { margin: 0 0 1 0; padding: 0; }
+    .message-assistant Markdown > *:last-child { margin: 0; }
+    .message-user Markdown > *:last-child { margin: 0; }
     MarkdownHeader { content-align: left middle; }
     #input-container { padding: 0 1 1 1; height: auto; dock: bottom; border-left: solid $primary; background: #1a1a1a; }
     #input { height: auto; min-height: 3; max-height: 30; border:transparent; background: #1a1a1a; }
@@ -418,35 +418,42 @@ class ChatApp(App):
 
     async def _execute_shell_passthrough(self, command: str) -> None:
         """
-        Execute a shell passthrough command directly.
+        Execute a shell passthrough command asynchronously.
+        
+        Uses asyncio subprocess to avoid blocking the event loop,
+        streaming output line-by-line to the ShellMessage widget.
         
         Args:
             command: Shell command to execute (without ! prefix).
         """
         chat = self.query_one("#chat", VerticalScroll)
         
-        # Execute the command
-        try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                cwd=Path.cwd()
-            )
-            output = result.stdout + result.stderr
-        except Exception as e:
-            output = str(e)
-        
-        # Display in chat
-        chat.mount(ShellMessage(command, output.rstrip()))
+        # Mount the message widget immediately with empty output
+        shell_msg = ShellMessage(command, "")
+        chat.mount(shell_msg)
         chat.scroll_end()
+        
+        # Stream output asynchronously
+        def on_output(accumulated: str) -> None:
+            shell_msg.update_output(accumulated.rstrip())
+            chat.scroll_end()
+        
+        output = await async_execute_shell_command(
+            command,
+            on_output=on_output,
+            cancel_hook=self._cancel_hook,
+        )
+        
+        # Final update with complete output
+        if output:
+            shell_msg.update_output(output.rstrip())
+            chat.scroll_end()
         
         # Save to thread history (NOT to agent context)
         self.thread.messages.append(Message(
             role="shell",
             content=command,
-            output=output.rstrip()
+            output=output.rstrip() if output else ""
         ))
         self._thread_service.save(self.thread)
 
@@ -585,8 +592,15 @@ class ChatApp(App):
                 tool_block = None
                 current_content.append(kwargs["data"])
 
+        def on_shell_output(tool_use_id: str, accumulated: str):
+            """Route streaming shell output to the correct ShellBlock."""
+            shell_block = shell_blocks.get(tool_use_id)
+            if shell_block is not None:
+                self.call_from_thread(shell_block.set_output, accumulated)
+                self.call_from_thread(chat.scroll_end)
+
         self.agent.callback_handler = on_stream
-        invocation_state = {"subagent_callback": on_subagent_stream, "profile": self.profile, "cancel_hook": self._cancel_hook, "thread_id": self.thread.id}
+        invocation_state = {"subagent_callback": on_subagent_stream, "shell_output_callback": on_shell_output, "profile": self.profile, "cancel_hook": self._cancel_hook, "thread_id": self.thread.id}
         loop = asyncio.get_event_loop()
         rejected = False
         cancelled = False
@@ -671,6 +685,9 @@ class ChatApp(App):
         """
         Handle shell command approval with trust policy flow.
         
+        Uses async subprocess execution to avoid blocking the event loop
+        while the command runs after approval.
+        
         Args:
             reason: Dict containing program, args, reason, command, thread_id.
             
@@ -691,8 +708,11 @@ class ChatApp(App):
             return "reject"
         
         if decision == "y":
-            # Allow once - execute without saving policy
-            result = execute_shell_after_approval(program, args)
+            # Allow once - execute asynchronously without saving policy
+            result = await async_execute_command(
+                program, args,
+                cancel_hook=self._cancel_hook,
+            )
             return result
         
         # For 't' (trust permanent) or 's' (trust session), show trust level modal
@@ -715,8 +735,11 @@ class ChatApp(App):
         )
         trust_service.save_policy(program, selected_level, trust_decision, thread_id)
         
-        # Execute the command
-        result = execute_shell_after_approval(program, args)
+        # Execute the command asynchronously
+        result = await async_execute_command(
+            program, args,
+            cancel_hook=self._cancel_hook,
+        )
         return result
 
     def _update_message(self, content: str) -> None:
