@@ -4,7 +4,7 @@ from nora.config.constants import AVAILABLE_MODELS as MODEL_NAMES
 from nora.config.constants import DEFAULT_MODEL_ID as MODEL_ID
 from nora.config.prompts import (
     BASE_PROMPT,
-    DEFAULT_ACT_PROMPT,
+    DEFAULT_EDIT_PROMPT,
     DEFAULT_PLAN_PROMPT,
     DEFAULT_VIBE_PROMPT,
     SUBAGENT_PROMPT,
@@ -12,6 +12,9 @@ from nora.config.prompts import (
 from nora.models.settings import Settings
 from nora.services.agent_service import AgentService, CancellationHook
 from nora.services.settings_service import SettingsService
+
+# Backward compat alias
+DEFAULT_ACT_PROMPT = DEFAULT_EDIT_PROMPT
 
 # Singleton services for backward compat
 _settings_service = SettingsService.get_instance()
@@ -56,6 +59,7 @@ __all__ = [
     "BASE_PROMPT",
     "DEFAULT_VIBE_PROMPT",
     "DEFAULT_PLAN_PROMPT",
+    "DEFAULT_EDIT_PROMPT",
     "DEFAULT_ACT_PROMPT",
     "SUBAGENT_PROMPT",
 ]

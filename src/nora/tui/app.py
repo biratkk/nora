@@ -1,6 +1,8 @@
 """Main TUI application."""
 
 import asyncio
+import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -20,12 +22,22 @@ from nora.services.run_service import RunService
 from nora.services.plugin_service import PluginService
 from nora.services.plan_service import PlanService
 from nora.services.agent_service import AgentService, CancellationHook
-from nora.widgets import ChatMessage, ToolCallBlock, ToolIndicator, SubagentBlock, ShellBlock, ShellMessage, AutocompleteWidget, LoadingWidget, MarkdownInput
-from nora.screens import ToolConfirmModal, ModelSelectorModal, DiffModal, SwitchModal, AddPluginModal, ShellApprovalModal, TrustLevelModal
+from nora.widgets import ChatMessage, ToolCallBlock, ToolIndicator, SubagentBlock, ShellBlock, ShellMessage, DiffBlock, AutocompleteWidget, LoadingWidget, MarkdownInput
+from nora.screens import ToolConfirmModal, ModelSelectorModal, DiffModal, SwitchModal, ShellApprovalModal, TrustLevelModal
 from nora.services.trust_service import TrustService, TrustDecision
 from nora.tools.shell import async_execute_command, async_execute_shell_command
 
-MODE_COLORS = {"vibe": "cyan", "plan": "yellow", "act": "green"}
+logger = logging.getLogger(__name__)
+
+MODE_COLORS = {"vibe": "cyan", "plan": "yellow", "edit": "green"}
+
+
+@dataclass
+class _ActiveInvocation:
+    """State needed to snapshot and save a partial run on cancellation."""
+    agent: object  # strands.Agent — avoid import for type only
+    run: Run
+    messages_before: int
 
 
 class ChatApp(App):
@@ -58,7 +70,7 @@ class ChatApp(App):
     #mode-indicator { width: auto; padding: 0 1; }
     .mode-vibe { background: cyan; color: black; }
     .mode-plan { background: yellow; color: black; }
-    .mode-act { background: green; color: black; }
+    .mode-edit { background: green; color: black; }
     #status-spacer { width: 1fr; }
     #status-keys { width: auto; padding: 0 1; color: $text-muted; }
     #model-name { width: auto; padding: 0 1; color: $text-muted; }
@@ -84,7 +96,7 @@ class ChatApp(App):
         
         # State
         self.agent = None
-        self._agent_mode = "vibe"  # Agent mode for next run (vibe/plan/act)
+        self._agent_mode = "vibe"  # Agent mode for next run (vibe/plan/edit)
         self._ac_trigger: Optional[str] = None
         self._ac_pos: int = 0
         self._ctrl_c_pressed = False
@@ -92,6 +104,7 @@ class ChatApp(App):
         self._processing = False
         self._current_worker = None
         self._cancel_hook = CancellationHook()
+        self._active_invocation: Optional[_ActiveInvocation] = None
         self._subagent_expanded = False
 
     def compose(self) -> ComposeResult:
@@ -108,23 +121,58 @@ class ChatApp(App):
             yield Static("@file  /cmd  Esc quit", id="status-keys")
 
     def action_ctrl_c(self) -> None:
-        if self._processing and self._current_worker:
-            self._cancel_hook.cancel()
-            self._current_worker.cancel()
-            self._set_processing(False)
-            chat_container = self.query_one("#chat-container", Container)
-            for loading in chat_container.query(LoadingWidget):
-                loading.remove()
+        if not self._processing or not self._current_worker:
+            # Not processing — handle double-Ctrl+C exit
+            if self._ctrl_c_pressed:
+                self.exit()
+            else:
+                self._ctrl_c_pressed = True
+                self.set_timer(1.0, self._reset_ctrl_c)
             return
-        
-        if self._ctrl_c_pressed:
-            self.exit()
-        else:
-            self._ctrl_c_pressed = True
-            self.set_timer(1.0, self._reset_ctrl_c)
+
+        self._cancel_hook.cancel()
+        self._current_worker.cancel()
+
+        # Save completed work from the interrupted run, then replace
+        # the agent with a fresh instance (fresh lock, clean state).
+        self._save_partial_run()
+        self._init_agent()
+
+        self._set_processing(False)
+        self._active_invocation = None
+
+        chat_container = self.query_one("#chat-container", Container)
+        for loading in chat_container.query(LoadingWidget):
+            loading.remove()
 
     def _reset_ctrl_c(self) -> None:
         self._ctrl_c_pressed = False
+
+    def _save_partial_run(self) -> None:
+        """Snapshot and save messages from the interrupted run.
+
+        Reads agent.messages from the old (still-locked) agent instance.
+        The background thread may still be appending, but Python's GIL
+        makes the list slice atomic at the bytecode level. Any dangling
+        toolUse blocks will be repaired by _validate_tool_pairing when
+        the history is reloaded.
+        """
+        invocation = self._active_invocation
+        if not invocation:
+            return
+
+        try:
+            partial_messages = list(
+                invocation.agent.messages[invocation.messages_before:]
+            )
+            self._run_service.cancel(invocation.run)
+            self._run_service.confirm_cancel(invocation.run)
+            self._run_service.save(invocation.run, partial_messages)
+        except Exception:
+            logger.warning(
+                "Failed to save partial run on cancellation",
+                exc_info=True,
+            )
 
     def _set_processing(self, processing: bool) -> None:
         self._processing = processing
@@ -150,9 +198,11 @@ class ChatApp(App):
         for block in chat.query(ToolIndicator):
             if block.tool in ToolIndicator.VERBOSE_TOOLS and block.collapsed == self._subagent_expanded:
                 block.toggle_collapsed()
+        for block in chat.query(DiffBlock):
+            if block.collapsed == self._subagent_expanded:
+                block.toggle_collapsed()
 
     def on_mount(self) -> None:
-        self._load_plugins()
         self._init_agent()
         # Set initial input container border color
         input_container = self.query_one("#input-container", Container)
@@ -221,10 +271,6 @@ class ChatApp(App):
                 if text:
                     chat.mount(ChatMessage("assistant", text))
 
-    def _load_plugins(self) -> None:
-        """Load plugins from $CWD/.nora/plugins/."""
-        self._plugin_service.load_all(startup_only=True)
-
     def _init_agent(self) -> None:
         messages = self._session_service.get_strands_history(self.session)
         self.agent = self._agent_service.create_agent(
@@ -248,21 +294,15 @@ class ChatApp(App):
         # Infer mode from the last run in this session, default to vibe
         runs = self._session_service.get_runs(session)
         self._agent_mode = runs[-1].agent_mode if runs else "vibe"
+        # Normalize legacy "act" to "edit"
+        if self._agent_mode == "act":
+            self._agent_mode = "edit"
         chat = self.query_one("#chat", VerticalScroll)
         chat.remove_children()
         self._render_session_history(chat)
         chat.scroll_end(animate=False)
         self._update_status_bar()
         self._init_agent()
-
-    def _on_plugin_created(self, plugin_path) -> None:
-        """Handle plugin creation confirmation."""
-        if plugin_path:
-            chat = self.query_one("#chat", VerticalScroll)
-            chat.mount(Static(f"[green]✓[/green] Plugin created: {plugin_path.name}"))
-            chat.scroll_end()
-            self._load_plugins()
-            self._init_agent()
 
     def _start_new_session(self) -> None:
         self.session = Session.create()
@@ -296,7 +336,7 @@ class ChatApp(App):
         if not plan_content:
             return
         plan = self._plan_service.save_and_link_session(self.session, plan_content)
-        self._agent_mode = "act"
+        self._agent_mode = "edit"
         self._update_status_bar()
         self._init_agent()
         self._session_service.save(self.session)
@@ -426,9 +466,6 @@ class ChatApp(App):
         if text == "/switch":
             self.push_screen(SwitchModal(), self._on_session_selected)
             return
-        if text == "/add-plugin":
-            self.push_screen(AddPluginModal(profile=self.profile), self._on_plugin_created)
-            return
 
         # Match plugins based on fuzzy keyword matching
         matched_plugins = self._match_plugins(text)
@@ -437,8 +474,10 @@ class ChatApp(App):
         if matched_plugins:
             enhanced_text = self._plugin_service.enhance_prompt(text, matched_plugins)
             
-            # Display only the original text in chat (not the plugin details)
+            # Display plugin activation indicators and original text in chat
             chat = self.query_one("#chat", VerticalScroll)
+            for plugin in matched_plugins:
+                chat.mount(Static(f"[cyan bold]🔌 Plugin Activated: {plugin.name}[/cyan bold]"))
             chat.mount(ChatMessage("user", text))
             chat.scroll_end()
             
@@ -509,7 +548,7 @@ class ChatApp(App):
 
         # Create a Run for this prompt/response cycle
         input_message = AcpMessage.user(prompt)
-        run = self._run_service.create("nora", [input_message], self.session.id)
+        run = self._run_service.create("nora", [input_message], self.session.id, agent_mode=self._agent_mode)
         self._run_service.start(run)
 
         current_content = []
@@ -567,6 +606,12 @@ class ChatApp(App):
                                 else:
                                     self.call_from_thread(shell_block.mark_finished)
                                 del shell_blocks[tool_use_id]
+                            elif tool_use_id and tool_use_id in diff_blocks:
+                                diff_block = diff_blocks[tool_use_id]
+                                if tr.get("status") == "error":
+                                    self.call_from_thread(diff_block.mark_failed)
+                                # Already marked finished in on_diff callback
+                                del diff_blocks[tool_use_id]
                             elif tool_use_id and tool_use_id in indicator_blocks:
                                 ind = indicator_blocks[tool_use_id]
                                 # Extract output for verbose tools
@@ -627,6 +672,10 @@ class ChatApp(App):
                                     shell_blocks[tool_use_id] = shell_block
                                 self.call_from_thread(chat.mount, shell_block)
                                 tool_block = None
+                            elif tool_name in ("Write", "Edit") and self._agent_mode in ("edit", "act"):
+                                # In edit mode, DiffBlock is created via diff_callback
+                                # from inside the tool — skip creating a ToolIndicator
+                                tool_block = None
                             else:
                                 if tool_block is None:
                                     tool_block = ToolCallBlock()
@@ -650,19 +699,46 @@ class ChatApp(App):
                 self.call_from_thread(shell_block.set_output, accumulated)
                 self.call_from_thread(chat.scroll_end)
 
+        diff_blocks: dict[str, DiffBlock] = {}
+
+        def on_diff(tool_use_id: str, path: str, old_content: str, new_content: str, reason: str):
+            """Mount a DiffBlock in chat for auto-approved file changes."""
+            # If old_content was empty, it's a new file (Write); otherwise it's an Edit
+            tool_name = "Write" if not old_content else "Edit"
+            block = DiffBlock(
+                path, old_content, new_content, reason,
+                tool_name=tool_name,
+                collapsed=not self._subagent_expanded,
+            )
+            block.finished = True  # Already written to disk
+            if tool_use_id:
+                diff_blocks[tool_use_id] = block
+            self.call_from_thread(chat.mount, block)
+            self.call_from_thread(chat.scroll_end)
+
         self.agent.callback_handler = on_stream
         invocation_state = {
             "subagent_callback": on_subagent_stream,
             "shell_output_callback": on_shell_output,
+            "diff_callback": on_diff,
             "profile": self.profile,
             "cancel_hook": self._cancel_hook,
             "session_id": str(self.session.id),
+            "agent_mode": self._agent_mode,
         }
         loop = asyncio.get_event_loop()
         rejected = False
         cancelled = False
         # Track message count before this run so we only save NEW messages
         messages_before_run = len(self.agent.messages)
+
+        # Store invocation state so action_ctrl_c can snapshot messages
+        # and save the partial run if the user cancels mid-execution.
+        self._active_invocation = _ActiveInvocation(
+            agent=self.agent,
+            run=run,
+            messages_before=messages_before_run,
+        )
 
         def mark_last_tool_failed():
             indicators = chat.query(ToolIndicator)
@@ -712,6 +788,10 @@ class ChatApp(App):
         loading.remove()
 
         if cancelled or self._cancel_hook.cancelled:
+            # If action_ctrl_c already saved the partial run and replaced the
+            # agent, skip — avoid double-saving or operating on the wrong agent.
+            if self._active_invocation is None:
+                return
             # Clear interrupt state so next message can be a regular string prompt
             self.agent._interrupt_state.deactivate()
             # Save run as cancelled
@@ -743,6 +823,7 @@ class ChatApp(App):
         if not self.session.metadata.name or self.session.name.startswith("Session "):
             self.session.generate_name(prompt)
         self._session_service.save(self.session)
+        self._active_invocation = None
         self._set_processing(False)
 
     async def _get_confirmation(self, name: str, reason: dict) -> str:

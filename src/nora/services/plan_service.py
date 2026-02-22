@@ -66,7 +66,7 @@ class PlanService:
         """
         plan = self.create_from_thread(thread, content)
         thread.plan_id = plan.id
-        thread.mode = "act"
+        thread.mode = "edit"
         return plan
     
     def save_and_link_session(self, session: Session, content: str) -> Plan:

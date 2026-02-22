@@ -4,6 +4,7 @@ from nora.tools.file_ops import read_file, write_file, edit_file, explore_dir, s
 from nora.tools.subagent import run_subagent
 from nora.tools.fetch import fetch_url
 from nora.tools.shell import run_shell, execute_shell_after_approval, async_execute_command, async_execute_shell_command
+from nora.tools.plugin import read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin
 
 __all__ = [
     "read_file", 
@@ -17,4 +18,9 @@ __all__ = [
     "execute_shell_after_approval",
     "async_execute_command",
     "async_execute_shell_command",
+    "read_plugin",
+    "write_plugin",
+    "edit_plugin",
+    "delete_plugin",
+    "search_plugin",
 ]

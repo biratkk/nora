@@ -153,7 +153,7 @@ class ThreadService:
         
         Args:
             thread: Target thread.
-            mode: New mode (vibe, plan, act).
+            mode: New mode (vibe, plan, edit).
         """
         thread.mode = mode
     

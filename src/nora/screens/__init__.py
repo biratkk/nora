@@ -5,7 +5,6 @@ from nora.tui.widgets.confirmation import ToolConfirmModal
 from nora.screens.diff_modal import DiffModal
 from nora.tui.widgets.model_modal import ModelSelectorModal
 from nora.tui.widgets.switch_modal import SwitchModal
-from nora.tui.widgets.add_plugin_modal import AddPluginModal
 from nora.screens.shell_approval_modal import ShellApprovalModal
 from nora.screens.trust_level_modal import TrustLevelModal
 
@@ -14,7 +13,6 @@ __all__ = [
     "DiffModal",
     "ModelSelectorModal",
     "SwitchModal",
-    "AddPluginModal",
     "ShellApprovalModal",
     "TrustLevelModal",
 ]

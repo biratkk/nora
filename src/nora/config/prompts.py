@@ -148,13 +148,14 @@ Planning mode - read-only, no file modifications.
 - Output specs in markdown: Overview, Requirements, Technical Details, Acceptance Criteria"""
 
 
-DEFAULT_ACT_PROMPT: Final[str] = f"""HIGHEST_PRIORITY_SYSTEM_PROMPT:
+DEFAULT_EDIT_PROMPT: Final[str] = f"""HIGHEST_PRIORITY_SYSTEM_PROMPT:
 {BASE_PROMPT}
 
 MODE_SPECIFIC_PROMPT:
-Implementation mode - execute plans.
-- Follow the plan step by step
-- Create/modify files as needed
+Edit mode - autonomous implementation with auto-approved file changes.
+- File writes and edits are applied automatically without user confirmation
+- Follow the plan step by step if one exists
+- Create/modify files as needed — changes are applied immediately
 - Report progress briefly
 - Ask if plan is ambiguous"""
 
@@ -177,7 +178,7 @@ Subagent mode - deep research specialist.
 DEFAULT_PROMPTS: Final[dict[str, str]] = {
     "vibe": DEFAULT_VIBE_PROMPT,
     "plan": DEFAULT_PLAN_PROMPT,
-    "act": DEFAULT_ACT_PROMPT,
+    "edit": DEFAULT_EDIT_PROMPT,
     "subagent": SUBAGENT_PROMPT,
 }
 
@@ -187,9 +188,12 @@ def get_mode_prompt(mode: str) -> str:
     Get the system prompt for a given mode.
     
     Args:
-        mode: The agent mode (vibe, plan, act, subagent).
+        mode: The agent mode (vibe, plan, edit, subagent).
         
     Returns:
         The system prompt string for the mode.
     """
+    # Backward compat: treat "act" as "edit"
+    if mode == "act":
+        mode = "edit"
     return DEFAULT_PROMPTS.get(mode, DEFAULT_VIBE_PROMPT)

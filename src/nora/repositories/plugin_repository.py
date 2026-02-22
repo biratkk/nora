@@ -73,14 +73,12 @@ class PluginRepository:
             description = metadata.get("description", "")
             keywords_str = metadata.get("keywords", "")
             keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
-            load_on_startup = str(metadata.get("load_on_startup", "no")).lower() == "yes"
             
             return Plugin(
                 name=name,
                 description=description,
                 keywords=keywords,
                 instructions=instructions,
-                load_on_startup=load_on_startup
             )
         except Exception:
             return None
@@ -119,13 +117,10 @@ class PluginRepository:
         
         return self._parse_plugin_file(path)
     
-    def load_all(self, startup_only: bool = False) -> List[Plugin]:
+    def load_all(self) -> List[Plugin]:
         """
         Load all plugins from disk.
         
-        Args:
-            startup_only: If True, only load plugins with load_on_startup=True.
-            
         Returns:
             List of Plugin instances.
         """
@@ -137,8 +132,6 @@ class PluginRepository:
         for path in self._plugins_dir.glob("*.md"):
             plugin = self._parse_plugin_file(path)
             if plugin is None:
-                continue
-            if startup_only and not plugin.load_on_startup:
                 continue
             plugins.append(plugin)
         

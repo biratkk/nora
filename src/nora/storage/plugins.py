@@ -15,7 +15,6 @@ class Plugin:
     description: str
     keywords: List[str]
     instructions: str
-    load_on_startup: bool
 
     def to_markdown(self) -> str:
         """Convert plugin to markdown format with frontmatter."""
@@ -23,7 +22,6 @@ class Plugin:
             "name": self.name,
             "description": self.description,
             "keywords": ", ".join(self.keywords),
-            "load_on_startup": "yes" if self.load_on_startup else "no"
         }
         yaml_str = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True).strip()
         return f"---\n{yaml_str}\n---\n{self.instructions}\n"
@@ -94,7 +92,6 @@ def parse_plugin_file(path: Path) -> Optional[Plugin]:
         description = metadata.get("description", "")
         keywords_str = metadata.get("keywords", "")
         keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
-        load_on_startup = str(metadata.get("load_on_startup", "no")).lower() == "yes"
         
         if not name:
             return None
@@ -104,18 +101,14 @@ def parse_plugin_file(path: Path) -> Optional[Plugin]:
             description=description,
             keywords=keywords,
             instructions=instructions,
-            load_on_startup=load_on_startup
         )
     except Exception:
         return None
 
 
-def load_plugins(startup_only: bool = True) -> List[Plugin]:
+def load_plugins() -> List[Plugin]:
     """Load all plugins from $CWD/.nora/plugins/.
     
-    Args:
-        startup_only: If True, only load plugins with load_on_startup=yes
-        
     Returns:
         List of Plugin objects
     """
@@ -127,8 +120,6 @@ def load_plugins(startup_only: bool = True) -> List[Plugin]:
     for path in plugins_dir.glob("*.md"):
         plugin = parse_plugin_file(path)
         if plugin:
-            if startup_only and not plugin.load_on_startup:
-                continue
             plugins.append(plugin)
     
     return plugins

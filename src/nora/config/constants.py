@@ -27,13 +27,13 @@ AVAILABLE_MODELS: Final[dict[str, str]] = {
 MODE_COLORS: Final[dict[str, str]] = {
     "vibe": "cyan",
     "plan": "yellow",
-    "act": "green",
+    "edit": "green",
 }
 
-MODE_CYCLE: Final[list[str]] = ["vibe", "plan", "act"]
+MODE_CYCLE: Final[list[str]] = ["vibe", "plan", "edit"]
 
 # Autocomplete
-COMMANDS: Final[list[str]] = ["/new", "/switch", "/model", "/add-plugin", "/exit"]
+COMMANDS: Final[list[str]] = ["/new", "/switch", "/model", "/exit"]
 MAX_AUTOCOMPLETE_RESULTS: Final[int] = 10
 
 # File handling

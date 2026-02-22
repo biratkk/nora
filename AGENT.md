@@ -3,34 +3,36 @@
 ## Overview
 
 CLI tool using Strands Agents SDK with AWS Bedrock (Claude Opus 4.5).
-Implements the **Agent Communication Protocol (ACP) v0.2.0** for agent interoperability.
+Implements the **Agent Client Protocol (ACP)** (JSON-RPC 2.0) for IDE/editor interoperability.
 
 ## Tech Stack
 
 - **Framework**: Strands Agents
 - **Model**: Claude Opus 4.5 via AWS Bedrock
-- **Protocol**: ACP v0.2.0 (Agent Communication Protocol)
+- **Protocol**: Agent Client Protocol (JSON-RPC 2.0) — https://agentclientprotocol.com
 - **CLI**: Typer | **TUI**: Textual | **HTTP**: FastAPI + Uvicorn | **Package**: uv
 
 ## Architecture
 
 Service Layer Pattern: `Presentation → Services → Repositories → File System`
 
-ACP Layer: `HTTP (FastAPI) → ACP Runner → Strands Agent → Tools`
+ACP Layer: `stdio/HTTP (JSON-RPC 2.0) → ProtocolHandler → Strands Agent → Tools`
 
 ## Structure
 
 ```
 src/nora/
-├── acp/           # ACP protocol implementation
-│   ├── models/    # ACP data models (Message, Run, Session, AgentManifest)
-│   ├── server.py  # FastAPI ACP server (nora acp)
-│   ├── runner.py  # Bridges ACP Runs → Strands Agent execution
-│   ├── convert.py # ACP ↔ Strands message conversion
-│   └── migrate.py # Legacy thread → ACP session migration
+├── acp/           # Agent Client Protocol implementation
+│   ├── models/    # Internal persistence models (Message, Run, Session)
+│   ├── server.py  # FastAPI JSON-RPC endpoint (nora acp --port)
+│   ├── stdio.py   # stdio transport (nora acp)
+│   ├── protocol.py # Transport-agnostic JSON-RPC dispatch
+│   ├── jsonrpc.py # JSON-RPC 2.0 message models
+│   ├── convert.py # Internal ↔ Strands message conversion
+│   └── migrate.py # Legacy thread → session migration
 ├── cli/           # CLI commands (chat, acp, manifest, migrate)
 ├── config/        # Constants, prompts
-├── models/        # Pydantic data models (legacy + ACP re-exports)
+├── models/        # Pydantic data models (legacy + internal re-exports)
 ├── repositories/  # Data persistence (session, run, thread, etc.)
 ├── services/      # Business logic (session, run, thread, etc.)
 ├── screens/       # TUI modals (re-exports)
@@ -42,55 +44,62 @@ src/nora/
 └── storage/       # Backward compat
 ```
 
-## ACP Protocol
+## Agent Client Protocol (JSON-RPC 2.0)
 
-Nora implements ACP v0.2.0 (https://agentcommunicationprotocol.dev).
+Nora implements the Agent Client Protocol from https://agentclientprotocol.com.
+Transport: stdio (default) or HTTP. Protocol: JSON-RPC 2.0.
 
 ### CLI Commands
 
 ```bash
 nora chat              # TUI chat (default)
-nora acp               # Start ACP HTTP server
-nora acp --port 9000   # Custom port
-nora manifest          # Print agent manifest as JSON
+nora acp               # Start ACP stdio transport (default)
+nora acp --port 8000   # Start ACP HTTP transport
+nora manifest          # Print agent info as JSON
 nora migrate           # Migrate legacy threads to ACP sessions
 ```
 
-### ACP Server Endpoints
+### JSON-RPC Methods
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/ping` | Health check → `{}` |
-| `GET` | `/agents` | List agents → `{agents: [manifest]}` |
-| `GET` | `/agents/nora` | Get Nora's manifest |
-| `POST` | `/runs` | Create run (sync/async/stream) |
-| `GET` | `/runs/{run_id}` | Get run status |
-| `GET` | `/runs/{run_id}/events` | List run events |
-| `POST` | `/runs/{run_id}/cancel` | Cancel a run |
-| `GET` | `/sessions/{session_id}` | Get session |
+| Method | Direction | Description |
+|--------|-----------|-------------|
+| `initialize` | Client → Agent | Protocol version & capability negotiation |
+| `session/new` | Client → Agent | Create a new session (returns sessionId) |
+| `session/load` | Client → Agent | Replay session history via notifications |
+| `session/prompt` | Client → Agent | Send prompt, receive streaming updates, get stopReason |
+| `session/cancel` | Client → Agent (notification) | Cancel in-progress prompt |
+| `session/update` | Agent → Client (notification) | Streaming content, tool calls, plans |
 
-### ACP Data Models
+### session/update Types
+
+| sessionUpdate | Description |
+|---------------|-------------|
+| `agent_message_chunk` | Agent text streaming |
+| `user_message_chunk` | User message replay (session/load) |
+| `tool_call` | New tool call (with kind, rawInput) |
+| `tool_call_update` | Tool call status/output update |
+
+### Internal Data Models
 
 ```python
 from nora.acp.models import (
-    AcpMessage,        # ACP message with parts
+    AcpMessage,        # Internal message with parts
     MessagePart,       # Content part with MIME type
     TrajectoryMetadata, # Tool call metadata
     CitationMetadata,  # Citation metadata
-    Run, RunStatus,    # Run lifecycle
+    Run, RunStatus,    # Run lifecycle (internal tracking)
     Session,           # Conversation context (replaces Thread)
-    AgentManifest,     # Agent discovery
     AcpError,          # Error model
 )
 ```
 
-### ACP Storage Format
+### Storage Format
 
 ```
 $CWD/.nora/sessions/<uuid>/
 ├── session.json              # Session metadata
 └── runs/
-    ├── <uuid>.json           # ACP Run (input + output messages)
+    ├── <uuid>.json           # Run (input + output messages)
     └── <uuid>.strands.json   # Strands-native messages (agent re-init)
 ```
 
@@ -105,15 +114,33 @@ created → in-progress → completed
 
 Each user prompt → agent response = one Run within a Session.
 
+### Cancellation Architecture
+
+When the user presses `Ctrl+C` during an active agent run:
+
+1. `CancellationHook.cancel()` signals the agent to stop at the next tool boundary
+2. The Textual worker is cancelled
+3. `_save_partial_run()` snapshots `agent.messages` from the old (still-locked) agent and saves the run as cancelled — Python's GIL makes the list slice thread-safe
+4. `_init_agent()` creates a **fresh agent instance** with its own `_invocation_lock`, rebuilt from saved session history
+5. Input is re-enabled immediately
+
+**Why replace the agent?** The Strands SDK holds an internal `threading.Lock` (`_invocation_lock`) during execution. When the worker is cancelled, the background thread may still be running (e.g., mid-Bedrock-stream), so the lock isn't released. Creating a fresh agent avoids the "Agent is already processing a request" error.
+
+**Message repair**: Any dangling `toolUse` blocks (no matching `toolResult`) are repaired by `RunRepository._validate_tool_pairing()` when session history is reloaded. It injects synthetic error `toolResult` messages with text "Tool execution was interrupted."
+
+**Key types**:
+- `_ActiveInvocation` (dataclass in `tui/app.py`): Groups the old agent reference, run, and message offset needed for the cancel snapshot
+- `CancellationHook` (in `services/agent_service.py`): Strands `HookProvider` that cancels tool execution via `BeforeToolCallEvent`
+
 ## Services
 
 ```python
 from nora.services import (
     SettingsService,    # Singleton - settings
     ThreadService,      # Thread CRUD (legacy)
-    SessionService,     # ACP Session CRUD (new)
-    RunService,         # ACP Run lifecycle (new)
-    PluginService,      # Plugin matching
+    SessionService,     # Session CRUD (new)
+    RunService,         # Run lifecycle (new)
+    PluginService,      # Plugin CRUD, matching, metadata generation
     PlanService,        # Plan operations
     AgentService,       # Agent creation
     CancellationHook,   # Cancellation
@@ -124,10 +151,10 @@ from nora.services import (
 
 | Mode | Tools | Description |
 |------|-------|-------------|
-| vibe | All | Full access |
-| plan | Read-only + Subagent | Planning with research |
-| act | All | Execute plans |
-| subagent | Read-only | Research (no nested subagents) |
+| vibe | All (including plugin tools) | Full access |
+| plan | Read-only + Subagent + Plugin tools | Planning with research |
+| edit | All (including plugin tools) | Auto-approved file writes, execute plans |
+| subagent | Read-only | Research (no nested subagents, no plugin tools) |
 
 ## Tools
 
@@ -141,6 +168,11 @@ from nora.services import (
 | `Subagent` | `prompt`, `reason` | Spawn read-only research agent |
 | `Fetch` | `url` | Fetch webpage HTML |
 | `Shell` | `program`, `args`, `reason` | Execute shell command |
+| `ReadPlugin` | `name` | Read a plugin's full content by name |
+| `WritePlugin` | `name`, `instructions`, `load_on_startup?` | Create a new plugin (auto-generates description & keywords via LLM) |
+| `EditPlugin` | `name`, `instructions?`, `load_on_startup?` | Partial update of an existing plugin (regenerates metadata if instructions change) |
+| `DeletePlugin` | `name` | Delete a plugin by name |
+| `SearchPlugin` | `keyword` | Fuzzy-search plugin keywords, returns matches with scores |
 
 ### Shell Tool & Trust Policy
 
@@ -223,16 +255,36 @@ The diff modal shows: **filepath** `·` reason (middle dot separator).
 ## Storage
 
 - Settings: `~/.nora/`
-- Sessions (ACP): `$CWD/.nora/sessions/` (new)
+- Sessions: `$CWD/.nora/sessions/` (new)
 - Threads (legacy): `$CWD/.nora/threads/`
 - Plugins: `$CWD/.nora/plugins/`
 - Plans: `$CWD/.nora/plans/`
 
+## Testing Process
+
+Before considering any task complete, run the build check:
+
+```bash
+uv build
+```
+
+This verifies the project compiles without errors (syntax errors, missing imports, etc.). If `uv build` fails, fix the reported errors and re-run until it passes. Do not consider a task done until the build succeeds.
+
+### Test Suite
+
+```bash
+uv run --with pytest pytest tests/ -v
+```
+
+| Test file | Coverage |
+|-----------|----------|
+| `tests/test_validate_tool_pairing.py` | Message repair logic for cancelled runs (dangling toolUse, orphaned toolResult, partial completion) |
+
 ## Imports
 
 ```python
-# ACP models (new)
-from nora.acp.models import AcpMessage, Run, Session, AgentManifest
+# Internal models (new)
+from nora.acp.models import AcpMessage, Run, Session
 from nora.services import SessionService, RunService
 
 # Legacy models (backward compat)
@@ -251,5 +303,5 @@ from nora.storage import save_thread, load_thread
 
 - Strands: https://strandsagents.com/latest/documentation/docs/
 - Bedrock: https://strandsagents.com/latest/documentation/docs/user-guide/concepts/model-providers/amazon-bedrock/
-- ACP: https://agentcommunicationprotocol.dev
-- ACP OpenAPI: https://github.com/i-am-bee/acp/blob/main/docs/spec/openapi.yaml
+- Agent Client Protocol: https://agentclientprotocol.com
+- ACP GitHub: https://github.com/agentclientprotocol/agent-client-protocol

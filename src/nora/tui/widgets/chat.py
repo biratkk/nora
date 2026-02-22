@@ -1,5 +1,6 @@
 """Chat message widget."""
 
+import difflib
 from datetime import datetime
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
@@ -301,7 +302,7 @@ class ToolIndicator(Container):
 
     DEFAULT_CSS = """
     ToolIndicator { height: auto; margin: 0 0 1 0; }
-    ToolIndicator .tool-header { height: 1; }
+    ToolIndicator .tool-header { height: auto; }
     ToolIndicator .tool-nested { padding-left: 2; height: auto; }
     ToolIndicator .tool-nested.collapsed { display: none; }
     ToolIndicator .tool-output-line { height: 1; }
@@ -338,6 +339,8 @@ class ToolIndicator(Container):
             pattern = self.params.get("pattern", "")
             path = self.params.get("path", ".")
             return f"{pattern}, {path}"
+        if self.tool == "Fetch":
+            return self.params.get("url", "")
         if "path" in self.params:
             return self.params["path"]
         return ", ".join(str(v) for v in self.params.values())
@@ -403,3 +406,150 @@ class ToolIndicator(Container):
         self.failed = True
         self.finished = True
         self.query_one("#tool-header", Static).update(self._format_header())
+
+
+class DiffBlock(Container):
+    """Collapsible inline diff block for auto-approved file changes in edit mode.
+
+    Shows a one-line summary when collapsed and a full inline diff when expanded.
+    Toggled by Ctrl+O along with other collapsible blocks.
+    """
+
+    DEFAULT_CSS = """
+    DiffBlock { height: auto; padding: 0 1; margin: 0 0 1 0; }
+    DiffBlock .diff-header { height: 1; }
+    DiffBlock .diff-nested { padding-left: 2; height: auto; }
+    DiffBlock .diff-nested.collapsed { display: none; }
+    DiffBlock .diff-line { height: 1; }
+    DiffBlock .diff-line-del { height: 1; background: #5c1c1c; }
+    DiffBlock .diff-line-add { height: 1; background: #1c5c1c; }
+    """
+
+    MAX_DIFF_LINES = 30
+
+    def __init__(
+        self,
+        path: str,
+        old_content: str,
+        new_content: str,
+        reason: str,
+        tool_name: str = "Write",
+        collapsed: bool = True,
+    ) -> None:
+        super().__init__()
+        self.path = path
+        self.old_content = old_content
+        self.new_content = new_content
+        self.reason = reason
+        self.tool_name = tool_name
+        self.finished = False
+        self.failed = False
+        self.collapsed = collapsed
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._format_header(), classes="diff-header", id="diff-header")
+        classes = "diff-nested collapsed" if self.collapsed else "diff-nested"
+        with Container(classes=classes, id="diff-nested"):
+            yield from self._render_diff_lines()
+
+    def _format_header(self) -> str:
+        hint = " [dim]Ctrl+O to expand[/dim]" if self.collapsed else ""
+        if self.failed:
+            return f"[red]✗ {self.tool_name}({self.path}) · {self.reason}[/red]{hint}"
+        status = "✓" if self.finished else "⋯"
+        return f"[dim]{status} {self.tool_name}({self.path}) · {self.reason}[/dim]{hint}"
+
+    def _render_diff_lines(self):
+        """Generate Static widgets for the inline diff."""
+        old_lines = self.old_content.splitlines()
+        new_lines = self.new_content.splitlines()
+
+        if not old_lines and not new_lines:
+            return
+
+        matcher = difflib.SequenceMatcher(None, old_lines, new_lines)
+        opcodes = matcher.get_opcodes()
+
+        # Determine context size
+        MIN_CONTEXT = 2
+        changed_lines = 0
+        for tag, i1, i2, j1, j2 in opcodes:
+            if tag != "equal":
+                changed_lines += (i2 - i1) + (j2 - j1)
+
+        context = max(MIN_CONTEXT, (self.MAX_DIFF_LINES - changed_lines) // 2)
+
+        diff_widgets: list[tuple[str, str, str]] = []  # (line_text, css_class, prefix)
+
+        for idx, (tag, i1, i2, j1, j2) in enumerate(opcodes):
+            if tag == "equal":
+                length = i2 - i1
+                if idx == 0:
+                    start = max(0, length - context)
+                    for k in range(start, length):
+                        ln = i1 + k + 1
+                        diff_widgets.append((f"{ln:4}   {old_lines[i1 + k]}", "diff-line", ""))
+                elif idx == len(opcodes) - 1:
+                    for k in range(min(context, length)):
+                        ln = i1 + k + 1
+                        diff_widgets.append((f"{ln:4}   {old_lines[i1 + k]}", "diff-line", ""))
+                else:
+                    if length <= context * 2:
+                        for k in range(length):
+                            ln = i1 + k + 1
+                            diff_widgets.append((f"{ln:4}   {old_lines[i1 + k]}", "diff-line", ""))
+                    else:
+                        for k in range(context):
+                            ln = i1 + k + 1
+                            diff_widgets.append((f"{ln:4}   {old_lines[i1 + k]}", "diff-line", ""))
+                        skipped = length - context * 2
+                        diff_widgets.append((f"     ... ({skipped} unchanged lines)", "diff-line", ""))
+                        for k in range(length - context, length):
+                            ln = i1 + k + 1
+                            diff_widgets.append((f"{ln:4}   {old_lines[i1 + k]}", "diff-line", ""))
+            elif tag == "replace":
+                for k in range(i2 - i1):
+                    ln = i1 + k + 1
+                    diff_widgets.append((f"{ln:4} - {old_lines[i1 + k]}", "diff-line-del", ""))
+                for k in range(j2 - j1):
+                    ln = j1 + k + 1
+                    diff_widgets.append((f"{ln:4} + {new_lines[j1 + k]}", "diff-line-add", ""))
+            elif tag == "delete":
+                for k in range(i2 - i1):
+                    ln = i1 + k + 1
+                    diff_widgets.append((f"{ln:4} - {old_lines[i1 + k]}", "diff-line-del", ""))
+            elif tag == "insert":
+                for k in range(j2 - j1):
+                    ln = j1 + k + 1
+                    diff_widgets.append((f"{ln:4} + {new_lines[j1 + k]}", "diff-line-add", ""))
+
+        # Truncate if too many lines
+        truncated = len(diff_widgets) > self.MAX_DIFF_LINES
+        display_widgets = diff_widgets[:self.MAX_DIFF_LINES] if truncated else diff_widgets
+
+        for i, (text, css_class, _) in enumerate(display_widgets):
+            is_last = (i == len(display_widgets) - 1) and not truncated
+            prefix = "└─" if is_last else "├─"
+            yield Static(f"{prefix} {text}", classes=css_class, markup=False)
+
+        if truncated:
+            remaining = len(diff_widgets) - self.MAX_DIFF_LINES
+            yield Static(f"[dim]└─ ... ({remaining} more lines)[/dim]", classes="diff-line")
+
+    def mark_finished(self) -> None:
+        self.finished = True
+        self.query_one("#diff-header", Static).update(self._format_header())
+
+    def mark_failed(self) -> None:
+        self.failed = True
+        self.finished = True
+        self.query_one("#diff-header", Static).update(self._format_header())
+
+    def toggle_collapsed(self) -> None:
+        self.collapsed = not self.collapsed
+        nested = self.query_one("#diff-nested", Container)
+        if self.collapsed:
+            nested.add_class("collapsed")
+        else:
+            nested.remove_class("collapsed")
+        self.query_one("#diff-header", Static).update(self._format_header())

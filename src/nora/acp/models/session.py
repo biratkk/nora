@@ -30,7 +30,7 @@ class Session(BaseModel):
     conversational history across multiple interactions. Each session has
     a UUID and Nora-specific metadata for name/plan tracking.
 
-    The interaction mode (vibe/plan/act) is set per-Run, not per-Session,
+    The interaction mode (vibe/plan/edit) is set per-Run, not per-Session,
     so you can plan and then act within the same session.
     """
 

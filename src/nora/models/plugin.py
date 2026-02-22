@@ -38,7 +38,6 @@ class Plugin(BaseModel):
     description: str = Field(default="", description="Brief description of plugin purpose")
     keywords: List[str] = Field(default_factory=list, description="Keywords for fuzzy matching")
     instructions: str = Field(default="", description="Instructions injected into agent context")
-    load_on_startup: bool = Field(default=False, description="Whether to load plugin automatically")
     
     @field_validator("name")
     @classmethod
@@ -74,7 +73,6 @@ class Plugin(BaseModel):
             "name": self.name,
             "description": self.description,
             "keywords": ", ".join(self.keywords),
-            "load_on_startup": "yes" if self.load_on_startup else "no"
         }
         yaml_str = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True).strip()
         return f"---\n{yaml_str}\n---\n{self.instructions}\n"

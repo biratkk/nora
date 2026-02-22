@@ -1,7 +1,8 @@
-"""ACP Message and MessagePart models.
+"""Nora internal Message and MessagePart models.
 
-Aligned with ACP v0.2.0 OpenAPI spec.
-See: https://agentcommunicationprotocol.dev/core-concepts/message-structure
+Used for internal persistence of conversation history (session runs).
+This is NOT the ACP wire format — the JSON-RPC ACP protocol uses
+ContentBlock (type/text) for prompts and session/update notifications.
 """
 
 import json

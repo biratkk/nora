@@ -92,56 +92,79 @@ def chat(
 
 @app.command()
 def acp(
-    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
-    port: int = typer.Option(8000, "--port", "-p", help="Port to listen on"),
+    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to (HTTP mode only)"),
+    port: Optional[int] = typer.Option(None, "--port", "-p", help="Port for HTTP mode. If omitted, uses stdio transport."),
     profile: Optional[str] = typer.Option(None, "--profile", help="AWS profile name"),
 ) -> None:
-    """Start the ACP (Agent Communication Protocol) server.
+    """Start the ACP (Agent Client Protocol) server.
 
-    Exposes Nora as an ACP-compliant agent accessible via REST API.
-    Other ACP clients can discover and interact with Nora at:
+    Exposes Nora as an Agent Client Protocol (JSON-RPC 2.0) agent.
 
-        GET  /ping                        - Health check
-        GET  /agents                      - Discover available agents
-        GET  /agents/{name}               - Get agent manifest
-        POST /runs                        - Create a new run
-        GET  /runs/{run_id}               - Get run status
-        GET  /runs/{run_id}/events        - Stream run events (SSE)
-        POST /runs/{run_id}               - Resume an awaiting run
-        POST /runs/{run_id}/cancel        - Cancel a run
-        GET  /sessions                    - List all sessions
-        POST /sessions                    - Create a new session
-        GET  /sessions/{session_id}       - Get session details
-        GET  /sessions/{session_id}/runs  - List runs for a session
+    Without --port (default): stdio transport.
+    Reads JSON-RPC from stdin, writes JSON-RPC to stdout. Logs go to stderr.
 
-    Open index.html in a browser to view the dashboard UI.
+    With --port: HTTP transport.
+    Starts an HTTP server accepting JSON-RPC 2.0 POST requests.
 
-    See: https://agentcommunicationprotocol.dev
+        nora acp                          # stdio (default)
+        nora acp --port 8000              # HTTP on port 8000
+        nora acp --port 8000 --host 0.0.0.0  # HTTP with custom host
+
+    See: https://agentclientprotocol.com
     """
-    import uvicorn
-    from nora.acp.server import create_app
+    if port is None:
+        # Validate --host is not used without --port
+        # typer sets default "0.0.0.0" so we check via sys.argv
+        import sys
+        if "--host" in sys.argv or "-h" in sys.argv:
+            console = Console()
+            console.print("[red]Error: --host can only be used with --port[/red]")
+            raise typer.Exit(1)
 
-    console = Console()
-    console.print(f"\n[bold cyan]🚀 Nora ACP Server[/bold cyan]")
-    console.print(f"   Agent Communication Protocol v0.2.0")
-    console.print(f"   Listening on [bold]http://{host}:{port}[/bold]")
-    console.print(f"   Agent manifest: [bold]http://{host}:{port}/agents/nora[/bold]")
-    console.print(f"   Health check:   [bold]http://{host}:{port}/ping[/bold]")
-    console.print(f"   Dashboard:      [bold]open index.html in browser[/bold]")
-    console.print()
+        # stdio transport
+        from nora.acp.stdio import run_stdio
+        run_stdio(profile=profile)
+    else:
+        # HTTP transport
+        import uvicorn
+        from nora.acp.server import create_app
 
-    app = create_app(profile=profile)
-    uvicorn.run(app, host=host, port=port, log_level="info")
+        console = Console()
+        console.print(f"\n[bold cyan]🚀 Nora ACP Server[/bold cyan]")
+        console.print(f"   Agent Client Protocol (JSON-RPC 2.0)")
+        console.print(f"   Listening on [bold]http://{host}:{port}[/bold]")
+        console.print(f"   JSON-RPC endpoint: [bold]POST http://{host}:{port}/[/bold]")
+        console.print(f"   Health check:      [bold]GET  http://{host}:{port}/ping[/bold]")
+        console.print()
+
+        app = create_app(profile=profile)
+        uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 @app.command()
 def manifest() -> None:
-    """Print Nora's ACP agent manifest as JSON."""
-    from nora.acp.models.agent_manifest import get_nora_manifest
+    """Print Nora's ACP agent info as JSON.
+
+    Shows the agent identity and capabilities as returned in the
+    Agent Client Protocol initialize response.
+    """
+    import json as _json
+    from nora.acp.protocol import AGENT_INFO, PROTOCOL_VERSION
 
     console = Console()
-    manifest = get_nora_manifest()
-    console.print_json(manifest.model_dump_json(indent=2))
+    info = {
+        "protocolVersion": PROTOCOL_VERSION,
+        "agentInfo": AGENT_INFO,
+        "agentCapabilities": {
+            "loadSession": True,
+            "promptCapabilities": {
+                "image": False,
+                "audio": False,
+                "embeddedContext": False,
+            },
+        },
+    }
+    console.print_json(_json.dumps(info, indent=2))
 
 
 @app.command()

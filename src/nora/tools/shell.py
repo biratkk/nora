@@ -15,6 +15,15 @@ from nora.services.trust_service import TrustService
 _trust_service = TrustService()
 
 
+def _run_async(invocation_state: dict[str, Any], coro: Any) -> Any:
+    """Run an async coroutine from a sync tool, using the event loop from invocation_state."""
+    loop = invocation_state.get("event_loop")
+    if loop is not None and loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result(timeout=300)
+    return asyncio.run(coro)
+
+
 @tool(name="Shell", context=True)
 def run_shell(
     tool_context: ToolContext,
@@ -43,14 +52,14 @@ def run_shell(
     if chaining_error:
         return f"Error: {chaining_error}"
     
-    # Get session/thread ID from invocation state
+    # Get invocation state
     invocation_state = getattr(tool_context, "invocation_state", {}) or {}
-    # Prefer session_id (ACP-native), fall back to thread_id (legacy)
     session_id = invocation_state.get("session_id", invocation_state.get("thread_id", ""))
+    client = invocation_state.get("client")
     shell_output_callback = invocation_state.get("shell_output_callback")
     cancel_hook = invocation_state.get("cancel_hook")
     
-    # Get tool_use_id from context to route streaming output to the correct ShellBlock
+    # Get tool_use_id from context to route streaming output
     tool_use_id = tool_context.tool_use.get("toolUseId")
     
     # Build an on_output callback that routes to the correct ShellBlock via tool_use_id
@@ -59,7 +68,20 @@ def run_shell(
         def on_output(accumulated: str) -> None:
             shell_output_callback(tool_use_id, accumulated)
     
-    # Check if command is already trusted
+    # --- ACP client path: delegate to client terminal ---
+    if client is not None:
+        return _execute_via_client(
+            invocation_state=invocation_state,
+            client=client,
+            program=program,
+            args=args,
+            reason=reason,
+            session_id=session_id,
+            cancel_hook=cancel_hook,
+            tool_use_id=tool_use_id,
+        )
+    
+    # --- Local path: direct execution with trust service ---
     if not _trust_service.is_command_trusted(program, args, session_id):
         # Request user approval via interrupt
         command_display = f"{program} {' '.join(args)}" if args else program
@@ -82,24 +104,88 @@ def run_shell(
     return _execute_command_streaming(program, args, on_output=on_output, cancel_hook=cancel_hook)
 
 
+def _execute_via_client(
+    invocation_state: dict[str, Any],
+    client: Any,
+    program: str,
+    args: list[str],
+    reason: str,
+    session_id: str,
+    cancel_hook: Optional[Any] = None,
+    tool_use_id: str | None = None,
+) -> str:
+    """Execute a command via the ACP client terminal interface.
+    
+    Uses terminal/create + terminal/wait_for_exit + terminal/output + terminal/release.
+    Permission is requested via client.request_permission before execution.
+    """
+    from nora.acp.client_interface import PermissionOption
+    
+    # Request permission via client (client decides whether to prompt the user)
+    command_display = f"{program} {' '.join(args)}" if args else program
+    message = f"Execute command: {command_display}\nReason: {reason}"
+    options = [
+        PermissionOption("allow", "allow_once", "Allow Once", f"Run: {command_display}"),
+        PermissionOption("allow_always", "allow_always", "Allow Always", f"Trust '{program}' for this session"),
+        PermissionOption("reject", "reject_once", "Reject", "Block this command"),
+    ]
+    
+    outcome = _run_async(invocation_state, client.request_permission(
+        session_id=session_id,
+        message=message,
+        options=options,
+        tool_call_id=tool_use_id,
+        tool_name="run_shell",
+    ))
+    
+    if outcome.is_cancelled or outcome.option_id == "reject":
+        return "Command rejected by user"
+    
+    # Create terminal and execute
+    try:
+        info = _run_async(invocation_state, client.terminal_create(
+            session_id=session_id,
+            command=program,
+            args=args if args else None,
+            cwd=None,
+        ))
+        
+        terminal_id = info.terminal_id
+        
+        try:
+            # Wait for the command to complete
+            exit_result = _run_async(invocation_state, client.terminal_wait_for_exit(session_id, terminal_id))
+            
+            # Get the output
+            term_output = _run_async(invocation_state, client.terminal_output(session_id, terminal_id))
+            
+            output = term_output.output
+            if exit_result.exit_code and exit_result.exit_code != 0:
+                output = f"[Exit code: {exit_result.exit_code}]\n{output}"
+            
+            return output if output else "(no output)"
+        finally:
+            # Always release the terminal
+            try:
+                _run_async(invocation_state, client.terminal_release(session_id, terminal_id))
+            except Exception:
+                pass  # Best-effort cleanup
+    
+    except Exception as e:
+        return f"Error executing command: {str(e)}"
+
+
 def _execute_command(program: str, args: list[str]) -> str:
     """
     Execute a shell command and return output (non-streaming).
-    
-    Args:
-        program: The program to execute.
-        args: The command arguments.
-        
-    Returns:
-        The command output (stdout and stderr combined).
     """
     try:
         result = subprocess.run(
             [program] + args,
             capture_output=True,
             text=True,
-            timeout=300,  # 5 minute timeout
-            cwd=None  # Use current working directory
+            timeout=300,
+            cwd=None
         )
         
         output = ""
@@ -131,18 +217,6 @@ def _execute_command_streaming(
 ) -> str:
     """
     Execute a shell command with streaming output.
-    
-    Streams output line-by-line to the on_output callback while the process runs.
-    Falls back to non-streaming execution if no callback is provided.
-    
-    Args:
-        program: The program to execute.
-        args: The command arguments.
-        on_output: Callback invoked with accumulated output as each line arrives.
-        cancel_hook: CancellationHook to check for cancellation.
-        
-    Returns:
-        The command output (stdout and stderr combined).
     """
     if on_output is None:
         return _execute_command(program, args)
@@ -156,14 +230,12 @@ def _execute_command_streaming(
             cwd=None,
         )
         
-        # Track process for cancellation
         output_lines: list[str] = []
         start_time = time.monotonic()
-        timeout = 300  # 5 minute timeout
+        timeout = 300
         
         try:
             for line in iter(process.stdout.readline, ""):
-                # Check cancellation
                 if cancel_hook and getattr(cancel_hook, "cancelled", False):
                     process.terminate()
                     try:
@@ -172,7 +244,6 @@ def _execute_command_streaming(
                         process.kill()
                     return "Error: Command cancelled by user"
                 
-                # Check timeout
                 if time.monotonic() - start_time > timeout:
                     process.terminate()
                     try:
@@ -211,18 +282,6 @@ async def async_execute_command(
 ) -> str:
     """
     Execute a shell command asynchronously without blocking the event loop.
-    
-    Uses asyncio.create_subprocess_exec for non-blocking execution with
-    line-by-line output streaming.
-    
-    Args:
-        program: The program to execute.
-        args: The command arguments.
-        on_output: Callback invoked with accumulated output as each line arrives.
-        cancel_hook: CancellationHook to check for cancellation.
-        
-    Returns:
-        The command output (stdout and stderr combined).
     """
     try:
         process = await asyncio.create_subprocess_exec(
@@ -233,11 +292,10 @@ async def async_execute_command(
         
         output_lines: list[str] = []
         start_time = time.monotonic()
-        timeout = 300  # 5 minute timeout
+        timeout = 300
         
         try:
             while True:
-                # Check cancellation
                 if cancel_hook and getattr(cancel_hook, "cancelled", False):
                     process.terminate()
                     try:
@@ -246,7 +304,6 @@ async def async_execute_command(
                         process.kill()
                     return "Error: Command cancelled by user"
                 
-                # Check timeout
                 if time.monotonic() - start_time > timeout:
                     process.terminate()
                     try:
@@ -260,7 +317,6 @@ async def async_execute_command(
                         process.stdout.readline(), timeout=0.5
                     )
                 except asyncio.TimeoutError:
-                    # No output yet, keep waiting
                     if process.returncode is not None:
                         break
                     continue
@@ -299,16 +355,6 @@ async def async_execute_shell_command(
 ) -> str:
     """
     Execute a shell command string asynchronously (for passthrough commands).
-    
-    Uses asyncio.create_subprocess_shell for shell features (pipes, redirects, etc).
-    
-    Args:
-        command: Shell command string to execute.
-        on_output: Callback invoked with accumulated output as each line arrives.
-        cancel_hook: CancellationHook to check for cancellation.
-        
-    Returns:
-        The command output (stdout and stderr combined).
     """
     try:
         process = await asyncio.create_subprocess_shell(
@@ -323,7 +369,6 @@ async def async_execute_shell_command(
         
         try:
             while True:
-                # Check cancellation
                 if cancel_hook and getattr(cancel_hook, "cancelled", False):
                     process.terminate()
                     try:
@@ -332,7 +377,6 @@ async def async_execute_shell_command(
                         process.kill()
                     return "Error: Command cancelled by user"
                 
-                # Check timeout
                 if time.monotonic() - start_time > timeout:
                     process.terminate()
                     try:
@@ -378,15 +422,6 @@ async def async_execute_shell_command(
 def execute_shell_after_approval(program: str, args: list[str]) -> str:
     """
     Execute a shell command after user approval (non-streaming).
-    
-    This is kept for backward compatibility but async_execute_command
-    should be preferred in the TUI.
-    
-    Args:
-        program: The program to execute.
-        args: The command arguments.
-        
-    Returns:
-        The command output.
+    Kept for backward compatibility.
     """
     return _execute_command(program, args)

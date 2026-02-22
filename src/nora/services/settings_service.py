@@ -96,7 +96,7 @@ class SettingsService:
         Get the system prompt for a mode.
         
         Args:
-            mode: Mode name (vibe, plan, act, subagent).
+            mode: Mode name (vibe, plan, edit, subagent).
             
         Returns:
             System prompt string or None.

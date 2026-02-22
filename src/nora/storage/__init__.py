@@ -34,9 +34,9 @@ def save_plan(source_id: str, content: str) -> Plan:
     return _plan_service._repository.save(source_id, content)
 
 
-def load_plugins(startup_only: bool = True):
+def load_plugins():
     """Load all plugins."""
-    return _plugin_service.load_all(startup_only)
+    return _plugin_service.load_all()
 
 
 def save_plugin(plugin: Plugin):

@@ -5,6 +5,7 @@ $CWD/.nora/sessions/<uuid>/session.json + runs/<uuid>.json
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -16,6 +17,8 @@ from nora.acp.models.session import Session, SessionMetadata
 from nora.config.constants import NORA_DIR_NAME, SESSIONS_DIR_NAME, THREADS_DIR_NAME
 from nora.repositories.run_repository import RunRepository
 from nora.repositories.session_repository import SessionRepository
+
+logger = logging.getLogger("nora.acp.migrate")
 
 
 def migrate_threads(
@@ -45,9 +48,15 @@ def migrate_threads(
             thread_data = json.loads(thread_path.read_text())
             _migrate_single_thread(thread_data, session_repo, run_repo)
             stats["migrated"] += 1
+            logger.debug("Migrated thread: %s", thread_path.name)
         except Exception as e:
             stats["errors"] += 1
+            logger.error("Failed to migrate %s: %s", thread_path.name, e, exc_info=True)
 
+    logger.info(
+        "Migration complete: migrated=%d, skipped=%d, errors=%d",
+        stats["migrated"], stats["skipped"], stats["errors"],
+    )
     return stats
 
 
@@ -60,6 +69,9 @@ def _migrate_single_thread(
     thread_id = thread_data.get("id", "")
     thread_name = thread_data.get("name", "")
     thread_mode = thread_data.get("mode", "vibe")
+    # Normalize legacy "act" mode to "edit"
+    if thread_mode == "act":
+        thread_mode = "edit"
     thread_plan_id = thread_data.get("plan_id")
     thread_created = thread_data.get("created", "")
     messages = thread_data.get("messages", [])

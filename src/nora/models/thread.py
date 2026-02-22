@@ -1,13 +1,15 @@
 """Thread model for conversation management."""
 
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 from pydantic import BaseModel, Field
 
+from nora.acp.models.run import AgentMode
 from nora.models.message import Message
 
 
-Mode = Literal["vibe", "plan", "act"]
+# Backward compat alias
+Mode = AgentMode
 
 
 class Thread(BaseModel):

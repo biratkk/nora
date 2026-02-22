@@ -8,7 +8,7 @@ class Plan(BaseModel):
     """
     Represents a saved plan/specification from plan mode.
     
-    Plans capture feature specifications that can be executed in act mode.
+    Plans capture feature specifications that can be executed in edit mode.
     """
     
     id: str = Field(..., description="Unique plan identifier (timestamp-based)")

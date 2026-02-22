@@ -1,4 +1,9 @@
-"""ACP data models aligned with ACP v0.2.0 OpenAPI spec."""
+"""ACP data models — Nora's internal persistence types.
+
+These models are used for storing conversation history (sessions, runs,
+messages). They are NOT the ACP JSON-RPC wire format types — the protocol
+layer in protocol.py handles wire format conversion.
+"""
 
 from nora.acp.models.message import (
     AcpMessage,
@@ -12,28 +17,9 @@ from nora.acp.models.run import (
     AgentMode,
     Run,
     RunStatus,
-    RunMode,
-    RunCreateRequest,
-    RunResumeRequest,
-    RunEvent,
-    RunEventType,
 )
 from nora.acp.models.session import Session, SessionMetadata
-from nora.acp.models.agent_manifest import (
-    AgentManifest,
-    ManifestMetadata,
-    Capability,
-    AgentStatus,
-)
 from nora.acp.models.error import AcpError, ErrorCode
-from nora.acp.models.responses import (
-    PingResponse,
-    ListAgentsResponse,
-    ListRunEventsResponse,
-    SessionCreateRequest,
-    ListSessionsResponse,
-    ListSessionRunsResponse,
-)
 
 __all__ = [
     # Message
@@ -47,27 +33,10 @@ __all__ = [
     "AgentMode",
     "Run",
     "RunStatus",
-    "RunMode",
-    "RunCreateRequest",
-    "RunResumeRequest",
-    "RunEvent",
-    "RunEventType",
     # Session
     "Session",
     "SessionMetadata",
-    # Agent Manifest
-    "AgentManifest",
-    "ManifestMetadata",
-    "Capability",
-    "AgentStatus",
     # Error
     "AcpError",
     "ErrorCode",
-    # Responses
-    "PingResponse",
-    "ListAgentsResponse",
-    "ListRunEventsResponse",
-    "SessionCreateRequest",
-    "ListSessionsResponse",
-    "ListSessionRunsResponse",
 ]

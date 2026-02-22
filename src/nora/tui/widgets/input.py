@@ -141,6 +141,10 @@ class MarkdownInput(TextArea):
             event.prevent_default()
             event.stop()
             self.app.action_execute_plan()
+        elif event.key == "ctrl+l":
+            event.prevent_default()
+            event.stop()
+            self.clear()
         elif event.key in ("ctrl+j", "shift+enter", "shift+return"):
             # Insert newline
             self.insert("\n")

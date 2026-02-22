@@ -89,14 +89,24 @@ class SettingsRepository:
         Load a mode-specific system prompt.
         
         Args:
-            mode: The mode name (vibe, plan, act, subagent).
+            mode: The mode name (vibe, plan, edit, subagent).
             
         Returns:
             The prompt content, or default prompt if file doesn't exist.
         """
+        # Backward compat: treat "act" as "edit"
+        if mode == "act":
+            mode = "edit"
+        
         prompt_file = self._modes_dir / f"{mode}.md"
         
         if prompt_file.exists():
             return prompt_file.read_text()
+        
+        # Also try legacy "act.md" for backward compat when loading "edit"
+        if mode == "edit":
+            legacy_file = self._modes_dir / "act.md"
+            if legacy_file.exists():
+                return legacy_file.read_text()
         
         return DEFAULT_PROMPTS.get(mode)

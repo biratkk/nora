@@ -83,7 +83,7 @@ class AgentService:
         Args:
             messages: Initial conversation messages.
             profile: AWS profile name override.
-            mode: Agent mode (vibe, plan, act, subagent).
+            mode: Agent mode (vibe, plan, edit, subagent).
             model_id: Model ID override.
             hooks: Additional hooks to register.
             
@@ -203,18 +203,20 @@ class AgentService:
         # Import here to avoid circular imports
         from nora.tools import (
             read_file, write_file, edit_file, explore_dir, 
-            search_files, run_subagent, fetch_url, run_shell
+            search_files, run_subagent, fetch_url, run_shell,
+            read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin,
         )
         
+        plugin_tools = [read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin]
         readonly_tools = [read_file, explore_dir, search_files, fetch_url]
-        plan_tools = readonly_tools + [run_subagent]
-        full_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url, run_shell]
+        plan_tools = readonly_tools + [run_subagent] + plugin_tools
+        full_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url, run_shell] + plugin_tools
         
         if mode == "subagent":
             return readonly_tools
         if mode == "plan":
             return plan_tools
-        return full_tools
+        return full_tools  # vibe, edit, act
     
     @staticmethod
     def get_model_name(model_id: Optional[str] = None) -> str:
