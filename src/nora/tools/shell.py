@@ -231,6 +231,7 @@ def _execute_command_streaming(
         )
         
         output_lines: list[str] = []
+        accumulated = ""
         start_time = time.monotonic()
         timeout = 300
         
@@ -253,7 +254,8 @@ def _execute_command_streaming(
                     return f"Error: Command timed out after {timeout} seconds"
                 
                 output_lines.append(line)
-                on_output("".join(output_lines))
+                accumulated += line
+                on_output(accumulated)
             
             process.wait()
         except Exception:
@@ -291,6 +293,7 @@ async def async_execute_command(
         )
         
         output_lines: list[str] = []
+        accumulated = ""
         start_time = time.monotonic()
         timeout = 300
         
@@ -327,7 +330,8 @@ async def async_execute_command(
                 line = line_bytes.decode()
                 output_lines.append(line)
                 if on_output:
-                    on_output("".join(output_lines))
+                    accumulated += line
+                    on_output(accumulated)
             
             await process.wait()
         except Exception:
@@ -364,6 +368,7 @@ async def async_execute_shell_command(
         )
         
         output_lines: list[str] = []
+        accumulated = ""
         start_time = time.monotonic()
         timeout = 300
         
@@ -400,7 +405,8 @@ async def async_execute_shell_command(
                 line = line_bytes.decode()
                 output_lines.append(line)
                 if on_output:
-                    on_output("".join(output_lines))
+                    accumulated += line
+                    on_output(accumulated)
             
             await process.wait()
         except Exception:

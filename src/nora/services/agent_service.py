@@ -68,6 +68,7 @@ class AgentService:
             settings_service: Settings service instance. Uses singleton if None.
         """
         self._settings_service = settings_service or SettingsService.get_instance()
+        self._tool_sets: Optional[dict[str, List]] = None
     
     def create_agent(
         self,
@@ -194,29 +195,36 @@ class AgentService:
         """
         Get the tool set for a mode.
         
+        Tool lists are cached on first call since they never change.
+        
         Args:
             mode: Agent mode.
             
         Returns:
             List of tool functions.
         """
-        # Import here to avoid circular imports
-        from nora.tools import (
-            read_file, write_file, edit_file, explore_dir, 
-            search_files, run_subagent, fetch_url, run_shell,
-            read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin,
-        )
+        if self._tool_sets is None:
+            # Import here to avoid circular imports
+            from nora.tools import (
+                read_file, write_file, edit_file, explore_dir, 
+                search_files, run_subagent, fetch_url, run_shell,
+                read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin,
+            )
+            
+            plugin_tools = [read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin]
+            readonly_tools = [read_file, explore_dir, search_files, fetch_url]
+            plan_tools = readonly_tools + [run_subagent] + plugin_tools
+            full_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url, run_shell] + plugin_tools
+            
+            self._tool_sets = {
+                "subagent": readonly_tools,
+                "plan": plan_tools,
+                "vibe": full_tools,
+                "edit": full_tools,
+                "act": full_tools,
+            }
         
-        plugin_tools = [read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin]
-        readonly_tools = [read_file, explore_dir, search_files, fetch_url]
-        plan_tools = readonly_tools + [run_subagent] + plugin_tools
-        full_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url, run_shell] + plugin_tools
-        
-        if mode == "subagent":
-            return readonly_tools
-        if mode == "plan":
-            return plan_tools
-        return full_tools  # vibe, edit, act
+        return self._tool_sets.get(mode, self._tool_sets["vibe"])
     
     @staticmethod
     def get_model_name(model_id: Optional[str] = None) -> str:

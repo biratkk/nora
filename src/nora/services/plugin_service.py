@@ -30,6 +30,31 @@ class PluginService:
             repository: Plugin repository instance. Creates default if None.
         """
         self._repository = repository or PluginRepository()
+        self._cache: Optional[List[Plugin]] = None
+        self._cache_mtime: float = 0.0
+    
+    def _get_plugins(self) -> List[Plugin]:
+        """
+        Get all plugins, using cache when possible.
+        
+        Checks the plugins directory mtime to detect changes.
+        Falls back to disk read if directory doesn't exist or on error.
+        
+        Returns:
+            List of Plugin instances.
+        """
+        try:
+            plugins_dir = self._repository.plugins_dir
+            if not plugins_dir.exists():
+                return []
+            mtime = plugins_dir.stat().st_mtime
+            if self._cache is not None and mtime == self._cache_mtime:
+                return self._cache
+            self._cache = self._repository.load_all()
+            self._cache_mtime = mtime
+            return self._cache
+        except OSError:
+            return self._repository.load_all()
     
     def load_all(self) -> List[Plugin]:
         """
@@ -50,6 +75,7 @@ class PluginService:
         Returns:
             Path to the created plugin file.
         """
+        self._cache = None
         return self._repository.save(plugin)
     
     def load(self, name: str) -> Optional[Plugin]:
@@ -74,6 +100,7 @@ class PluginService:
         Returns:
             True if deleted, False if not found.
         """
+        self._cache = None
         return self._repository.delete(name)
     
     def _effective_threshold(self, text: str, base_threshold: int) -> int:
@@ -114,7 +141,7 @@ class PluginService:
             List of matching Plugin instances.
         """
         effective = self._effective_threshold(text, threshold)
-        plugins = self._repository.load_all()
+        plugins = self._get_plugins()
         matched: List[Plugin] = []
         text_lower = text.lower()
         
@@ -139,7 +166,7 @@ class PluginService:
         Returns:
             List of (Plugin, best_score) tuples, sorted by score descending.
         """
-        all_plugins = self._repository.load_all()
+        all_plugins = self._get_plugins()
         keyword_lower = keyword.lower()
         results: List[Tuple[Plugin, int]] = []
         

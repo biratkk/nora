@@ -58,6 +58,7 @@ class TrustService:
             repository: TrustRepository instance. Creates new one if None.
         """
         self._repository = repository or TrustRepository()
+        self._policy_cache: dict[str, TrustPolicyFile] = {}
     
     def _is_shell_program(self, program: str) -> bool:
         """Check if program is a shell that interprets command strings."""
@@ -114,6 +115,8 @@ class TrustService:
         """
         Check if a command is trusted based on existing policies.
         
+        Uses an in-memory cache to avoid disk reads on repeated lookups.
+        
         Args:
             program: The program name.
             args: The command arguments.
@@ -122,8 +125,9 @@ class TrustService:
         Returns:
             True if any policy allows the command.
         """
-        policy_file = self._repository.load(program)
-        return policy_file.find_matching_policy(args, thread_id) is not None
+        if program not in self._policy_cache:
+            self._policy_cache[program] = self._repository.load(program)
+        return self._policy_cache[program].find_matching_policy(args, thread_id) is not None
     
     def get_trust_levels(
         self, 
@@ -240,5 +244,6 @@ class TrustService:
             decision: TRUST_PERMANENT or TRUST_SESSION.
             thread_id: The current thread ID.
         """
+        self._policy_cache.pop(program, None)
         policy = self.create_policy_from_level(level, decision, thread_id)
         self._repository.add_policy(program, policy)

@@ -25,6 +25,7 @@ class SettingsService:
         """
         self._repository = repository or SettingsRepository()
         self._cached_settings: Optional[Settings] = None
+        self._prompt_cache: dict[str, Optional[str]] = {}
     
     @classmethod
     def get_instance(cls) -> "SettingsService":
@@ -95,13 +96,17 @@ class SettingsService:
         """
         Get the system prompt for a mode.
         
+        Uses cache since mode prompt files are static during a session.
+        
         Args:
             mode: Mode name (vibe, plan, edit, subagent).
             
         Returns:
             System prompt string or None.
         """
-        return self._repository.load_mode_prompt(mode)
+        if mode not in self._prompt_cache:
+            self._prompt_cache[mode] = self._repository.load_mode_prompt(mode)
+        return self._prompt_cache[mode]
     
     def clear_cache(self) -> None:
         """Clear the cached settings."""

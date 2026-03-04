@@ -8,10 +8,24 @@ import pathspec
 
 MAX_FILE_SIZE = 1024 * 1024  # 1MB
 
+# Module-level cache for compiled gitignore patterns, keyed by cwd string.
+_gitignore_cache: dict[str, Optional[pathspec.PathSpec]] = {}
+
+
+def clear_gitignore_cache() -> None:
+    """Clear the cached gitignore patterns.
+    
+    Call after modifying a .gitignore file to ensure subsequent
+    path validations use fresh patterns.
+    """
+    _gitignore_cache.clear()
+
 
 def load_gitignore(cwd: Path) -> Optional[pathspec.PathSpec]:
     """
     Load and compile gitignore patterns from a directory tree.
+    
+    Results are cached by cwd. Use clear_gitignore_cache() to invalidate.
     
     Walks the directory tree and collects patterns from all .gitignore files,
     prefixing patterns with their relative directory path.
@@ -22,6 +36,10 @@ def load_gitignore(cwd: Path) -> Optional[pathspec.PathSpec]:
     Returns:
         Compiled PathSpec for matching, or None if no patterns found.
     """
+    key = str(cwd)
+    if key in _gitignore_cache:
+        return _gitignore_cache[key]
+
     patterns: list[str] = []
     
     for root, _, _ in os.walk(cwd):
@@ -40,9 +58,9 @@ def load_gitignore(cwd: Path) -> Optional[pathspec.PathSpec]:
         except OSError:
             continue
     
-    if not patterns:
-        return None
-    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+    spec = pathspec.PathSpec.from_lines("gitwildmatch", patterns) if patterns else None
+    _gitignore_cache[key] = spec
+    return spec
 
 
 def scan_files(cwd: Path) -> list[str]:

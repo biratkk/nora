@@ -7,7 +7,7 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
-from nora.utils.files import load_gitignore, is_binary_file
+from nora.utils.files import load_gitignore, is_binary_file, clear_gitignore_cache
 
 
 def _validate_path(path: str) -> Path:
@@ -194,6 +194,10 @@ def write_file(tool_context: ToolContext, path: str, content: str, reason: str) 
             tool_use_id = tool_context.tool_use.get("toolUseId")
             diff_callback(tool_use_id, path, old_content, content, reason)
     
+    # Invalidate gitignore cache if a .gitignore was written
+    if path.endswith(".gitignore"):
+        clear_gitignore_cache()
+    
     return f"Successfully wrote to {path}"
 
 
@@ -260,6 +264,10 @@ def edit_file(tool_context: ToolContext, path: str, old_text: str, new_text: str
         if diff_callback and mode in ("edit", "act"):
             tool_use_id = tool_context.tool_use.get("toolUseId")
             diff_callback(tool_use_id, path, file_content, new_content, reason)
+    
+    # Invalidate gitignore cache if a .gitignore was edited
+    if path.endswith(".gitignore"):
+        clear_gitignore_cache()
     
     return f"Successfully edited {path}"
 

@@ -260,6 +260,74 @@ The diff modal shows: **filepath** `·` reason (middle dot separator).
 - Plugins: `$CWD/.nora/plugins/`
 - Plans: `$CWD/.nora/plans/`
 
+## Caching
+
+Several hot paths use in-memory caches to avoid redundant disk I/O and allocations.
+
+### Gitignore Patterns — `utils/files.py`
+
+- **Cache**: Module-level `_gitignore_cache: dict[str, PathSpec | None]`, keyed by `str(cwd)`.
+- **Populated**: On first call to `load_gitignore(cwd)` — walks the full directory tree once, compiles all `.gitignore` patterns.
+- **Used by**: `_validate_path()` in `file_ops.py`, `scan_files()`, `is_path_valid()` — every `Read`, `Write`, `Edit` tool call.
+- **Invalidated**: `clear_gitignore_cache()` is called after writing/editing a file whose path ends with `.gitignore`.
+- **Lifetime**: Process-wide (module global). Survives across sessions.
+
+### Plugin List — `services/plugin_service.py`
+
+- **Cache**: Instance-level `_cache: list[Plugin] | None` with `_cache_mtime: float`.
+- **Populated**: On first call to `_get_plugins()`. Checks `plugins_dir.stat().st_mtime` — returns cache if mtime unchanged.
+- **Used by**: `match_plugins()` (called every user message), `search_by_keyword()`.
+- **Invalidated**: Set to `None` on `save()` and `delete()`.
+- **Lifetime**: Per `PluginService` instance.
+
+### Trust Policies — `services/trust_service.py`
+
+- **Cache**: Instance-level `_policy_cache: dict[str, TrustPolicyFile]`, keyed by program name.
+- **Populated**: On first `is_command_trusted()` call per program — reads and deserializes the policy JSON.
+- **Used by**: `is_command_trusted()` — called on every shell command.
+- **Invalidated**: `save_policy()` pops the program key from cache.
+- **Lifetime**: Per `TrustService` instance (note: `shell.py` uses a module-level `_trust_service` singleton).
+
+### Mode Prompts — `services/settings_service.py`
+
+- **Cache**: Instance-level `_prompt_cache: dict[str, str | None]`, keyed by mode name.
+- **Populated**: On first `get_mode_prompt(mode)` call per mode — reads the markdown file from disk.
+- **Used by**: `AgentService.create_agent()` via `_get_system_prompt()` — called on every agent creation (mode cycle, model change, session switch).
+- **Invalidated**: Never (mode prompt files are static during a session). `clear_cache()` resets `_cached_settings` but not `_prompt_cache`.
+- **Lifetime**: Per `SettingsService` instance (singleton via `get_instance()`).
+
+### Tool Lists — `services/agent_service.py`
+
+- **Cache**: Instance-level `_tool_sets: dict[str, list] | None`.
+- **Populated**: On first `_get_tools_for_mode()` call — imports tool functions and builds lists for all modes.
+- **Used by**: `create_agent()`, `create_subagent()` — called on every agent creation.
+- **Invalidated**: Never (tool references are static).
+- **Lifetime**: Per `AgentService` instance.
+
+### Handler Dispatch Table — `acp/protocol.py`
+
+- **Cache**: Instance-level `self._handlers: dict[str, Callable]`.
+- **Populated**: Once in `ProtocolHandler.__init__()`.
+- **Used by**: `handle_request()` — called on every JSON-RPC request.
+- **Invalidated**: Never.
+- **Lifetime**: Per `ProtocolHandler` instance.
+
+### Tool Kind Mapping — `acp/protocol.py`
+
+- **Cache**: Module-level `_TOOL_KINDS: dict[str, str]` constant.
+- **Populated**: At import time.
+- **Used by**: `_tool_kind()` — called once per tool invocation during streaming.
+- **Invalidated**: Never (constant).
+- **Lifetime**: Process-wide.
+
+### Session Switch Modal Search Text — `tui/widgets/switch_modal.py`
+
+- **Cache**: Instance-level `_search_text_cache: dict[str, str]`, keyed by session ID.
+- **Populated**: In `compose()` when the modal opens — reads all session histories once.
+- **Used by**: `_get_session_search_text()` — called for every session on every keystroke during fuzzy filtering.
+- **Invalidated**: Never (modal is short-lived; destroyed on dismiss).
+- **Lifetime**: Per `SwitchModal` instance (single modal open/close cycle).
+
 ## Testing Process
 
 Before considering any task complete, run the build check:

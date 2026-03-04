@@ -109,6 +109,15 @@ class ProtocolHandler:
         # Per-session mode tracking (defaults to "vibe")
         self._session_modes: dict[str, AgentMode] = {}
 
+        # Handler dispatch table (built once, not per-request)
+        self._handlers: dict[str, Callable] = {
+            "initialize": self._handle_initialize,
+            "session/new": self._handle_session_new,
+            "session/load": self._handle_session_load,
+            "session/prompt": self._handle_session_prompt,
+            "session/set_config_option": self._handle_set_config_option,
+        }
+
         client_type = type(client).__name__ if client else "None"
         logger.info("ProtocolHandler initialized (client=%s, profile=%s)", client_type, profile)
 
@@ -125,15 +134,7 @@ class ProtocolHandler:
         """
         params = params or {}
 
-        handlers: dict[str, Callable] = {
-            "initialize": self._handle_initialize,
-            "session/new": self._handle_session_new,
-            "session/load": self._handle_session_load,
-            "session/prompt": self._handle_session_prompt,
-            "session/set_config_option": self._handle_set_config_option,
-        }
-
-        handler = handlers.get(method)
+        handler = self._handlers.get(method)
         if handler is None:
             # Custom methods starting with _ → Method not found (per ACP spec)
             logger.warning("Unknown method: %s (request_id=%s)", method, request_id)
@@ -675,28 +676,27 @@ class ProtocolHandler:
 from pathlib import Path
 
 
+# Map tool names to ACP ToolKind categories (module-level constant)
+_TOOL_KINDS: dict[str, str] = {
+    "read_file": "read",
+    "explore_dir": "read",
+    "search_files": "read",
+    "read_plugin": "read",
+    "search_plugin": "read",
+    "write_file": "edit",
+    "edit_file": "edit",
+    "write_plugin": "edit",
+    "edit_plugin": "edit",
+    "delete_plugin": "delete",
+    "run_shell": "execute",
+    "fetch_url": "fetch",
+    "run_subagent": "think",
+}
+
+
 def _tool_kind(tool_name: str) -> str:
     """Map a Nora tool name to an Agent Client Protocol ToolKind."""
-    read_tools = {"read_file", "explore_dir", "search_files", "read_plugin", "search_plugin"}
-    edit_tools = {"write_file", "edit_file", "write_plugin", "edit_plugin"}
-    delete_tools = {"delete_plugin"}
-    execute_tools = {"run_shell"}
-    fetch_tools = {"fetch_url"}
-    think_tools = {"run_subagent"}
-
-    if tool_name in read_tools:
-        return "read"
-    if tool_name in edit_tools:
-        return "edit"
-    if tool_name in delete_tools:
-        return "delete"
-    if tool_name in execute_tools:
-        return "execute"
-    if tool_name in fetch_tools:
-        return "fetch"
-    if tool_name in think_tools:
-        return "think"
-    return "other"
+    return _TOOL_KINDS.get(tool_name, "other")
 
 
 class _ProtocolError(Exception):

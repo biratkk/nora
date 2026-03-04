@@ -68,6 +68,7 @@ class SwitchModal(ModalScreen[Session | None]):
         self.filtered_sessions: list[Session] = []
         self.selected_index = 0
         self.search_query = ""
+        self._search_text_cache: dict[str, str] = {}
     
     def compose(self) -> ComposeResult:
         with Container():
@@ -77,6 +78,11 @@ class SwitchModal(ModalScreen[Session | None]):
                 with VerticalScroll(id="session-list"):
                     self.sessions = self._session_service.list_all()
                     self.filtered_sessions = self.sessions.copy()
+                    # Pre-cache search text for all sessions to avoid disk reads on every keystroke
+                    self._search_text_cache = {
+                        str(s.id): self._build_session_search_text(s)
+                        for s in self.sessions
+                    }
                     if not self.sessions:
                         yield Static("[dim]No sessions[/dim]")
                     else:
@@ -87,11 +93,10 @@ class SwitchModal(ModalScreen[Session | None]):
                             yield item
             yield Static("Type to search  ↑/↓ navigate  Enter select  Esc close", classes="modal-status")
 
-    def _get_session_search_text(self, session: Session) -> str:
-        """Get searchable text for a session (name + id + run content)."""
+    def _build_session_search_text(self, session: Session) -> str:
+        """Build searchable text for a session (name + id + run content). Reads from disk."""
         parts = [session.name or '', str(session.id)]
         
-        # Include message content from runs
         try:
             history = self._session_service.get_history(session)
             for msg in history:
@@ -102,6 +107,16 @@ class SwitchModal(ModalScreen[Session | None]):
             pass
         
         return ' '.join(parts)
+
+    def _get_session_search_text(self, session: Session) -> str:
+        """Get searchable text for a session, using cache."""
+        session_key = str(session.id)
+        if session_key in self._search_text_cache:
+            return self._search_text_cache[session_key]
+        # Fallback: build and cache (shouldn't normally happen)
+        text = self._build_session_search_text(session)
+        self._search_text_cache[session_key] = text
+        return text
 
     def _filter_sessions(self) -> None:
         """Filter sessions based on current search query."""
