@@ -733,6 +733,7 @@ _TOOL_KINDS: dict[str, str] = {
     "run_shell": "execute",
     "fetch_url": "fetch",
     "run_subagent": "think",
+    "ask_user": "other",
 }
 
 

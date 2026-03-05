@@ -7,6 +7,7 @@ from nora.tui.widgets.loading import LoadingWidget
 from nora.tui.widgets.input import MarkdownInput
 from nora.tui.widgets.modal import BaseModal
 from nora.tui.widgets.context_bar import ContextBar
+from nora.tui.widgets.ask_container import AskContainer
 
 __all__ = [
     "ChatMessage",
@@ -22,4 +23,5 @@ __all__ = [
     "MarkdownInput",
     "BaseModal",
     "ContextBar",
+    "AskContainer",
 ]

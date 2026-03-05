@@ -22,7 +22,7 @@ from nora.services.run_service import RunService
 from nora.services.plugin_service import PluginService
 from nora.services.plan_service import PlanService
 from nora.services.agent_service import AgentService, CancellationHook
-from nora.widgets import ChatMessage, ToolCallBlock, ToolIndicator, SubagentBlock, ShellBlock, ShellMessage, DiffBlock, AutocompleteWidget, LoadingWidget, MarkdownInput, ContextBar
+from nora.widgets import ChatMessage, ToolCallBlock, ToolIndicator, SubagentBlock, ShellBlock, ShellMessage, DiffBlock, AutocompleteWidget, LoadingWidget, MarkdownInput, ContextBar, AskContainer
 from nora.screens import ToolConfirmModal, ModelSelectorModal, DiffModal, SwitchModal, ShellApprovalModal, TrustLevelModal
 from nora.services.trust_service import TrustService, TrustDecision
 from nora.tools.shell import async_execute_command, async_execute_shell_command
@@ -712,6 +712,10 @@ class ChatApp(App):
                                 # In edit mode, DiffBlock is created via diff_callback
                                 # from inside the tool — skip creating a ToolIndicator
                                 tool_block = None
+                            elif tool_name == "Ask":
+                                # Ask renders its own inline UI via the interrupt flow
+                                # — skip creating a ToolIndicator
+                                tool_block = None
                             else:
                                 if tool_block is None:
                                     tool_block = ToolCallBlock()
@@ -872,8 +876,63 @@ class ChatApp(App):
             return await self.push_screen_wait(DiffModal(reason["path"], reason["old"], reason["new"], reason["reason"]))
         if name == "shell-confirm":
             return await self._handle_shell_confirmation(reason)
+        if name == "ask-confirm":
+            return await self._handle_ask_interrupt(reason["questions"])
         tool_name = name.replace("-confirm", "")
         return await self.push_screen_wait(ToolConfirmModal(tool_name, reason))
+
+    async def _handle_ask_interrupt(self, questions: list[dict]) -> str:
+        """Replace input area with AskContainer, await answers, restore.
+
+        Hides #input-container and #info-container, mounts an AskContainer
+        in their place, awaits the user's answers via an asyncio.Future,
+        then restores the original layout.
+
+        Args:
+            questions: List of question dicts with 'question' and 'options'.
+
+        Returns:
+            Formatted Q/A string.
+        """
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+
+        # Hide input and info containers
+        input_container = self.query_one("#input-container", Container)
+        info_container = self.query_one("#info-container", Container)
+        input_container.display = False
+        info_container.display = False
+
+        # Hide the Thinking indicator while the user is answering
+        chat_container = self.query_one("#chat-container", Container)
+        loading_widgets = list(chat_container.query(LoadingWidget))
+        for lw in loading_widgets:
+            lw.display = False
+
+        # Mount AskContainer in their place
+        main = self.query_one("#main", Container)
+        ask_container = AskContainer(questions, future, id="ask-container")
+        main.mount(ask_container)
+        ask_container.focus()
+
+        try:
+            result = await future
+        finally:
+            # Restore original containers
+            ask_container.remove()
+            input_container.display = True
+            info_container.display = True
+            # Restore the Thinking indicator
+            for lw in loading_widgets:
+                lw.display = True
+            self.query_one("#input", MarkdownInput).focus()
+
+        # Show the Q&A in the chat so the user can visually confirm selections
+        chat = self.query_one("#chat", VerticalScroll)
+        chat.mount(ChatMessage("user", result))
+        chat.scroll_end()
+
+        return result
     
     async def _handle_shell_confirmation(self, reason: dict) -> str:
         """

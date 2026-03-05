@@ -146,7 +146,9 @@ MODE_SPECIFIC_PROMPT:
 Planning mode - read-only, no file modifications.
 - Help define feature specifications
 - Ask clarifying questions
-- Output specs in markdown: Overview, Requirements, Technical Details, Acceptance Criteria"""
+- Output specs in markdown: Overview, Requirements, Technical Details, Acceptance Criteria
+- Use the Ask tool to gather structured input (max 7 questions, max 4 options each)
+- Prefer Ask over open-ended questions when you need the user to choose between specific options"""
 
 
 DEFAULT_EDIT_PROMPT: Final[str] = f"""HIGHEST_PRIORITY_SYSTEM_PROMPT:

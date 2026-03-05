@@ -209,6 +209,7 @@ class AgentService:
                 read_file, write_file, edit_file, explore_dir, 
                 search_files, run_subagent, fetch_url, run_shell,
                 read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin,
+                ask_user,
             )
             from nora.tools.shell import update_shell_tool_cwd
             
@@ -217,8 +218,8 @@ class AgentService:
             
             plugin_tools = [read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin]
             readonly_tools = [read_file, explore_dir, search_files, fetch_url]
-            plan_tools = readonly_tools + [run_subagent] + plugin_tools
-            full_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url, run_shell] + plugin_tools
+            plan_tools = readonly_tools + [run_subagent, ask_user] + plugin_tools
+            full_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url, run_shell, ask_user] + plugin_tools
             
             self._tool_sets = {
                 "subagent": readonly_tools,

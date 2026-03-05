@@ -5,6 +5,7 @@ from nora.tools.subagent import run_subagent
 from nora.tools.fetch import fetch_url
 from nora.tools.shell import run_shell, execute_shell_after_approval, async_execute_command, async_execute_shell_command
 from nora.tools.plugin import read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin
+from nora.tools.ask import ask_user
 
 __all__ = [
     "read_file", 
@@ -23,4 +24,5 @@ __all__ = [
     "edit_plugin",
     "delete_plugin",
     "search_plugin",
+    "ask_user",
 ]
