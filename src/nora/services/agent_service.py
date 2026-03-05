@@ -210,6 +210,10 @@ class AgentService:
                 search_files, run_subagent, fetch_url, run_shell,
                 read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin,
             )
+            from nora.tools.shell import update_shell_tool_cwd
+            
+            # Inject current working directory into Shell tool's dir parameter description
+            update_shell_tool_cwd()
             
             plugin_tools = [read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin]
             readonly_tools = [read_file, explore_dir, search_files, fetch_url]

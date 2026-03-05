@@ -15,12 +15,22 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
 
+class TokenUsage(BaseModel):
+    """Latest token usage snapshot for context window tracking."""
+
+    input_tokens: int = Field(default=0, description="Input tokens from last LLM cycle")
+    output_tokens: int = Field(default=0, description="Output tokens from last LLM cycle")
+    total_tokens: int = Field(default=0, description="Total tokens from last LLM cycle")
+    model_id: str = Field(default="", description="Model ID used for this measurement")
+
+
 class SessionMetadata(BaseModel):
     """Nora-specific session extensions (not in ACP core spec)."""
 
     name: str = Field(default="", description="Human-readable session name")
     plan_id: Optional[str] = Field(default=None, description="Associated plan ID (set when a plan run completes)")
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
+    token_usage: Optional[TokenUsage] = Field(default=None, description="Latest token usage for context window tracking")
 
 
 class Session(BaseModel):

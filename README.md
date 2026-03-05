@@ -194,7 +194,7 @@ Run shell commands directly without AI involvement by prefixing with `!`:
 | `Search` | `pattern`, `path` | Grep for text |
 | `Subagent` | `prompt`, `reason` | Spawn read-only research agent |
 | `Fetch` | `url` | Fetch webpage HTML |
-| `Shell` | `program`, `args`, `reason` | Execute shell command |
+| `Shell` | `program`, `args`, `reason`, `dir?` | Execute shell command |
 | `ReadPlugin` | `name` | Read a plugin's full content by name |
 | `WritePlugin` | `name`, `instructions`, `load_on_startup?` | Create a new plugin (auto-generates metadata) |
 | `EditPlugin` | `name`, `instructions?`, `load_on_startup?` | Partial update of an existing plugin |
@@ -217,6 +217,8 @@ Shell commands require user approval. When approving, you choose a trust level:
 | Partial + any | `git log -n *` | First N args + anything |
 | Exact | `git log -n 5` | Exact full command |
 | Exact + any | `git log -n 5 *` | Exact + any additional |
+
+**Working Directory (`dir`)**: An optional `dir` parameter allows executing commands in a specific directory. Accepts relative or absolute paths — relative paths are resolved from cwd. The current working directory is dynamically injected into the tool's parameter description so the model knows the cwd without needing `pwd`. The approval modal displays the target directory when set.
 
 **Scope**: Press `s` for session-only (current thread) or `t` for permanent trust.
 

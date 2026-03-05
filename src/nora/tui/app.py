@@ -12,17 +12,17 @@ from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Static
 from thefuzz import fuzz
 
-from nora.acp.models.session import Session
+from nora.acp.models.session import Session, TokenUsage
 from nora.acp.models.message import AcpMessage, TrajectoryMetadata
 from nora.acp.models.run import Run, RunStatus
-from nora.config.constants import DEFAULT_MODEL_ID, MODE_CYCLE
+from nora.config.constants import DEFAULT_MODEL_ID, MODE_CYCLE, CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW
 from nora.services.settings_service import SettingsService
 from nora.services.session_service import SessionService
 from nora.services.run_service import RunService
 from nora.services.plugin_service import PluginService
 from nora.services.plan_service import PlanService
 from nora.services.agent_service import AgentService, CancellationHook
-from nora.widgets import ChatMessage, ToolCallBlock, ToolIndicator, SubagentBlock, ShellBlock, ShellMessage, DiffBlock, AutocompleteWidget, LoadingWidget, MarkdownInput
+from nora.widgets import ChatMessage, ToolCallBlock, ToolIndicator, SubagentBlock, ShellBlock, ShellMessage, DiffBlock, AutocompleteWidget, LoadingWidget, MarkdownInput, ContextBar
 from nora.screens import ToolConfirmModal, ModelSelectorModal, DiffModal, SwitchModal, ShellApprovalModal, TrustLevelModal
 from nora.services.trust_service import TrustService, TrustDecision
 from nora.tools.shell import async_execute_command, async_execute_shell_command
@@ -59,13 +59,15 @@ class ChatApp(App):
     .message-assistant Markdown > *:last-child { margin: 0; }
     .message-user Markdown > *:last-child { margin: 0; }
     MarkdownHeader { content-align: left middle; }
-    #input-container { padding: 0 1 1 1; height: auto; dock: bottom; border-left: solid $primary; background: #1a1a1a; }
+    #input-container { padding: 0 1 0 1; height: auto; border-left: solid $primary; background: #1a1a1a; }
     #input { height: auto; min-height: 3; max-height: 30; border:transparent; background: #1a1a1a; }
     #input:focus { background: #1a1a1a; }
     #input .text-area--cursor-line { background: #1a1a1a; }
     #input.shell-mode { border: round red; }
     #input.disabled { opacity: 0.5; }
     #autocomplete { dock: bottom; margin-bottom: 4; }
+    #info-container { height: auto; padding: 0 1 1 1; background: #1a1a1a; border-left: solid $primary; }
+    #context-bar { height: 1; text-align: right; padding: 0 1; }
     #status-bar { height: 1; dock: bottom; background: $surface; }
     #mode-indicator { width: auto; padding: 0 1; }
     .mode-vibe { background: cyan; color: black; }
@@ -114,6 +116,12 @@ class ChatApp(App):
             yield AutocompleteWidget(id="autocomplete")
             with Container(id="input-container"):
                 yield MarkdownInput(placeholder="Type a message... (@file /cmd)", id="input")
+            with Container(id="info-container"):
+                yield ContextBar(
+                    max_tokens=CONTEXT_WINDOWS.get(self._agent_model, DEFAULT_CONTEXT_WINDOW),
+                    mode=self._agent_mode,
+                    id="context-bar",
+                )
         with Horizontal(id="status-bar"):
             yield Static(f" {self._agent_mode.upper()} ", id="mode-indicator", classes=f"mode-{self._agent_mode}")
             yield Static(f" {self._agent_service.get_model_name()} ", id="model-name")
@@ -207,11 +215,16 @@ class ChatApp(App):
         # Set initial input container border color
         input_container = self.query_one("#input-container", Container)
         input_container.styles.border_left = ("solid", MODE_COLORS[self._agent_mode])
+        info_container = self.query_one("#info-container", Container)
+        info_container.styles.border_left = ("solid", MODE_COLORS[self._agent_mode])
         
         chat = self.query_one("#chat", VerticalScroll)
         
         # Render chat history from session runs
         self._render_session_history(chat)
+        
+        # Restore context bar from saved token usage
+        self._restore_context_bar()
         
         chat.scroll_end(animate=False)
         self.query_one("#input", MarkdownInput).focus()
@@ -271,6 +284,15 @@ class ChatApp(App):
                 if text:
                     chat.mount(ChatMessage("assistant", text))
 
+    def _restore_context_bar(self) -> None:
+        """Restore context bar from saved session token usage."""
+        context_bar = self.query_one("#context-bar", ContextBar)
+        usage = self.session.metadata.token_usage
+        if usage:
+            context_bar.update_usage(usage.input_tokens)
+        else:
+            context_bar.reset()
+
     def _init_agent(self) -> None:
         messages = self._session_service.get_strands_history(self.session)
         self.agent = self._agent_service.create_agent(
@@ -286,6 +308,9 @@ class ChatApp(App):
             self._agent_model = model_id
             self._init_agent()
             self.query_one("#model-name", Static).update(f" {self._agent_service.get_model_name(model_id)} ")
+            self.query_one("#context-bar", ContextBar).set_max_tokens(
+                CONTEXT_WINDOWS.get(model_id, DEFAULT_CONTEXT_WINDOW)
+            )
 
     def _on_session_selected(self, session: Session | None) -> None:
         if session is None:
@@ -302,6 +327,7 @@ class ChatApp(App):
         self._render_session_history(chat)
         chat.scroll_end(animate=False)
         self._update_status_bar()
+        self._restore_context_bar()
         self._init_agent()
 
     def _start_new_session(self) -> None:
@@ -311,6 +337,7 @@ class ChatApp(App):
         chat = self.query_one("#chat", VerticalScroll)
         chat.remove_children()
         self._update_status_bar()
+        self.query_one("#context-bar", ContextBar).reset()
         self._init_agent()
 
     def _update_status_bar(self) -> None:
@@ -322,6 +349,11 @@ class ChatApp(App):
         # Update input container border color
         input_container = self.query_one("#input-container", Container)
         input_container.styles.border_left = ("solid", MODE_COLORS[self._agent_mode])
+        # Update info container border color
+        info_container = self.query_one("#info-container", Container)
+        info_container.styles.border_left = ("solid", MODE_COLORS[self._agent_mode])
+        # Update context bar mode color
+        self.query_one("#context-bar", ContextBar).set_mode(self._agent_mode)
 
     def action_cycle_mode(self) -> None:
         current_idx = MODE_CYCLE.index(self._agent_mode)
@@ -438,10 +470,13 @@ class ChatApp(App):
 
     def on_markdown_input_shell_mode_changed(self, event: MarkdownInput.ShellModeChanged) -> None:
         input_container = self.query_one("#input-container", Container)
+        info_container = self.query_one("#info-container", Container)
         if event.shell_mode:
             input_container.styles.border_left = ("solid", "red")
+            info_container.styles.border_left = ("solid", "red")
         else:
             input_container.styles.border_left = ("solid", MODE_COLORS[self._agent_mode])
+            info_container.styles.border_left = ("solid", MODE_COLORS[self._agent_mode])
 
     async def on_markdown_input_submitted(self, event: MarkdownInput.Submitted) -> None:
         text = event.value.strip()
@@ -667,7 +702,8 @@ class ChatApp(App):
                                 program = tool_input.get("program", "")
                                 args = tool_input.get("args", [])
                                 reason = tool_input.get("reason", "")
-                                shell_block = ShellBlock(program, args, reason, collapsed=not self._subagent_expanded)
+                                shell_dir = tool_input.get("dir")
+                                shell_block = ShellBlock(program, args, reason, dir=shell_dir, collapsed=not self._subagent_expanded)
                                 if tool_use_id:
                                     shell_blocks[tool_use_id] = shell_block
                                 self.call_from_thread(chat.mount, shell_block)
@@ -798,6 +834,8 @@ class ChatApp(App):
             self._run_service.cancel(run)
             self._run_service.confirm_cancel(run)
             self._run_service.save(run, list(self.agent.messages[messages_before_run:]))
+            # Update token usage from whatever the agent managed before cancellation
+            self._update_token_usage(result if not cancelled else None)
         elif rejected:
             # Clear interrupt state so next message can be a regular string prompt
             self.agent._interrupt_state.deactivate()
@@ -809,6 +847,7 @@ class ChatApp(App):
                 chat.scroll_end()
             self._run_service.complete(run, run_output)
             self._run_service.save(run, list(self.agent.messages[messages_before_run:]))
+            self._update_token_usage(result)
         else:
             if current_content:
                 text = "".join(current_content)
@@ -818,6 +857,7 @@ class ChatApp(App):
             # Complete the run with all output
             self._run_service.complete(run, run_output)
             self._run_service.save(run, list(self.agent.messages[messages_before_run:]))
+            self._update_token_usage(result)
         
         # Update session metadata
         if not self.session.metadata.name or self.session.name.startswith("Session "):
@@ -852,10 +892,11 @@ class ChatApp(App):
         args = reason["args"]
         cmd_reason = reason["reason"]
         session_id = reason.get("session_id", str(self.session.id))
+        cmd_dir = reason.get("dir")
         
         # Show initial approval modal
         decision = await self.push_screen_wait(
-            ShellApprovalModal(program, args, cmd_reason)
+            ShellApprovalModal(program, args, cmd_reason, dir=cmd_dir)
         )
         
         if decision == "n":
@@ -866,6 +907,7 @@ class ChatApp(App):
             result = await async_execute_command(
                 program, args,
                 cancel_hook=self._cancel_hook,
+                cwd=cmd_dir,
             )
             return result
         
@@ -893,6 +935,7 @@ class ChatApp(App):
         result = await async_execute_command(
             program, args,
             cancel_hook=self._cancel_hook,
+            cwd=cmd_dir,
         )
         return result
 
@@ -902,6 +945,53 @@ class ChatApp(App):
         if widgets:
             widgets.last().update_content(content)
         chat.scroll_end()
+
+    def _extract_token_usage(self, result) -> TokenUsage:
+        """Extract token usage from a Strands AgentResult.
+
+        Tries the last cycle of the latest invocation first (most accurate
+        context size), falls back to accumulated_usage.
+
+        Args:
+            result: AgentResult from agent() call.
+
+        Returns:
+            TokenUsage with extracted values.
+        """
+        input_tokens = 0
+        output_tokens = 0
+        total_tokens = 0
+
+        if result is not None and hasattr(result, "metrics"):
+            metrics = result.metrics
+            inv = metrics.latest_agent_invocation
+            if inv and inv.cycles:
+                last_cycle = inv.cycles[-1]
+                input_tokens = last_cycle.usage.get("inputTokens", 0)
+                output_tokens = last_cycle.usage.get("outputTokens", 0)
+                total_tokens = last_cycle.usage.get("totalTokens", 0)
+            elif metrics.accumulated_usage:
+                input_tokens = metrics.accumulated_usage.get("inputTokens", 0)
+                output_tokens = metrics.accumulated_usage.get("outputTokens", 0)
+                total_tokens = metrics.accumulated_usage.get("totalTokens", 0)
+
+        return TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            model_id=self._agent_model,
+        )
+
+    def _update_token_usage(self, result) -> None:
+        """Extract token usage from result and update session + context bar.
+
+        Args:
+            result: AgentResult from agent() call (can be None).
+        """
+        usage = self._extract_token_usage(result)
+        if usage.input_tokens > 0:
+            self.session.metadata.token_usage = usage
+            self.query_one("#context-bar", ContextBar).update_usage(usage.input_tokens)
 
 
 def run_tui(session: Session, profile: Optional[str] = None) -> None:

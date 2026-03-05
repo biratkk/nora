@@ -1,5 +1,7 @@
 """Shell command approval modal."""
 
+from typing import Optional
+
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical
 from textual.screen import ModalScreen
@@ -47,6 +49,11 @@ class ShellApprovalModal(ModalScreen[str]):
         text-align: center;
     }
     
+    ShellApprovalModal .shell-dir {
+        margin-bottom: 1;
+        text-align: center;
+    }
+    
     ShellApprovalModal .reason {
         margin-bottom: 1;
         text-align: center;
@@ -75,7 +82,7 @@ class ShellApprovalModal(ModalScreen[str]):
         Binding("escape", "deny", "Deny", show=False),
     ]
 
-    def __init__(self, program: str, args: list[str], reason: str) -> None:
+    def __init__(self, program: str, args: list[str], reason: str, dir: Optional[str] = None) -> None:
         """
         Initialize the approval modal.
         
@@ -83,11 +90,13 @@ class ShellApprovalModal(ModalScreen[str]):
             program: The program to execute.
             args: The command arguments.
             reason: The agent's explanation for running this command.
+            dir: Optional working directory for the command.
         """
         super().__init__()
         self.program = program
         self.args = args
         self.reason = reason
+        self.dir = dir
     
     @property
     def command_display(self) -> str:
@@ -101,6 +110,8 @@ class ShellApprovalModal(ModalScreen[str]):
         with Container():
             yield Static("[bold]Shell Command[/bold]", classes="title")
             yield Static(f"[yellow]{self.command_display}[/yellow]", classes="command")
+            if self.dir:
+                yield Static(f"[dim]in [/dim][cyan]{self.dir}[/cyan]", classes="shell-dir")
             yield Static(f"[dim]{self.reason}[/dim]", classes="reason")
             
             with Vertical(classes="options"):

@@ -1,7 +1,9 @@
 """Chat message widget."""
 
 import difflib
+import os
 from datetime import datetime
+from typing import Optional
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.widgets import Static, Markdown
@@ -127,12 +129,14 @@ class ShellBlock(Container):
         program: str,
         args: list[str],
         reason: str,
+        dir: Optional[str] = None,
         collapsed: bool = True
     ) -> None:
         super().__init__()
         self.program = program
         self.args = args
         self.reason = reason
+        self.dir = dir
         self.finished = False
         self.failed = False
         self.collapsed = collapsed
@@ -145,12 +149,25 @@ class ShellBlock(Container):
             command = f"{self.program} {' '.join(self.args)}" if self.args else self.program
             yield Static(f"[dim]├─ {command}[/dim]", classes="shell-command", id="shell-command")
 
+    def _display_dir(self) -> str:
+        """Return dir for display: relative if child of cwd, else absolute."""
+        if not self.dir:
+            return ""
+        try:
+            rel = os.path.relpath(self.dir)
+            if rel.startswith(".."):
+                return self.dir  # not a child → absolute
+            return rel
+        except ValueError:
+            return self.dir  # different drive on Windows
+
     def _format_header(self) -> str:
         hint = " [dim]Ctrl+O to expand[/dim]" if self.collapsed else ""
+        dir_part = f'dir="{self._display_dir()}", ' if self.dir else ""
         if self.failed:
-            return f"[red]✗ Shell({self.reason})[/red]{hint}"
+            return f"[red]✗ Shell({dir_part}{self.reason})[/red]{hint}"
         status = "✓" if self.finished else "⋯"
-        return f"[dim]{status} Shell({self.reason})[/dim]{hint}"
+        return f"[dim]{status} Shell({dir_part}{self.reason})[/dim]{hint}"
 
     def set_output(self, output: str) -> None:
         """Set the command output, displayed as nested lines when expanded."""

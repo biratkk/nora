@@ -167,7 +167,7 @@ from nora.services import (
 | `Search` | `pattern`, `path` | Grep for text |
 | `Subagent` | `prompt`, `reason` | Spawn read-only research agent |
 | `Fetch` | `url` | Fetch webpage HTML |
-| `Shell` | `program`, `args`, `reason` | Execute shell command |
+| `Shell` | `program`, `args`, `reason`, `dir?` | Execute shell command |
 | `ReadPlugin` | `name` | Read a plugin's full content by name |
 | `WritePlugin` | `name`, `instructions`, `load_on_startup?` | Create a new plugin (auto-generates description & keywords via LLM) |
 | `EditPlugin` | `name`, `instructions?`, `load_on_startup?` | Partial update of an existing plugin (regenerates metadata if instructions change) |
@@ -177,6 +177,8 @@ from nora.services import (
 ### Shell Tool & Trust Policy
 
 The Shell tool executes system commands with user approval. Commands require confirmation unless trusted.
+
+**Working Directory (`dir`)**: An optional `dir` parameter allows executing commands in a specific directory. Accepts relative or absolute paths — relative paths are resolved from cwd. The current working directory is dynamically injected into the tool's parameter description so the model knows the cwd without needing `pwd`. The `ShellBlock` header displays the directory (relative if child of cwd, absolute otherwise): `Shell(dir="src/tools", reason)`.
 
 **Trust Levels** - When approving a command like `git log -n 5`:
 1. `git log` - Base command only

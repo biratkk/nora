@@ -1,6 +1,7 @@
 """Shell tool for executing system commands."""
 
 import asyncio
+import os
 import subprocess
 import time
 from typing import Any, Callable, Optional
@@ -13,6 +14,21 @@ from nora.services.trust_service import TrustService
 
 # Global trust service instance
 _trust_service = TrustService()
+
+
+def update_shell_tool_cwd() -> None:
+    """Update the Shell tool's dir parameter description with the current working directory."""
+    cwd = os.getcwd()
+    dir_desc = (
+        f"Optional path (relative or absolute) to the directory in which to execute the command. "
+        f"If relative, it is resolved from the current working directory. "
+        f"The current working directory is: {cwd}. "
+        f"If not provided, the command runs in the current working directory."
+    )
+    try:
+        run_shell._tool_spec["inputSchema"]["json"]["properties"]["dir"]["description"] = dir_desc
+    except (AttributeError, KeyError, TypeError):
+        pass  # Graceful fallback if tool spec structure changes
 
 
 def _run_async(invocation_state: dict[str, Any], coro: Any) -> Any:
@@ -30,6 +46,7 @@ def run_shell(
     program: str, 
     args: list[str], 
     reason: str,
+    dir: Optional[str] = None,
 ) -> str:
     """Execute a shell command.
 
@@ -37,6 +54,9 @@ def run_shell(
         program: The program/command to execute (e.g., "git", "ls", "npm").
         args: List of arguments to pass to the program.
         reason: A brief explanation of why this command is being run and what it will accomplish.
+        dir: Optional path (relative or absolute) to the directory in which to execute the command.
+             If relative, it is resolved from the current working directory.
+             If not provided, the command runs in the current working directory.
         
     Returns:
         The command output (stdout and stderr combined).
@@ -51,6 +71,14 @@ def run_shell(
     chaining_error = _trust_service.check_for_chaining(program, args)
     if chaining_error:
         return f"Error: {chaining_error}"
+    
+    # Resolve and validate dir if provided
+    if dir is not None:
+        dir = os.path.abspath(dir)
+        if not os.path.exists(dir):
+            return f"Error: Directory not found: {dir}"
+        if not os.path.isdir(dir):
+            return f"Error: Not a directory: {dir}"
     
     # Get invocation state
     invocation_state = getattr(tool_context, "invocation_state", {}) or {}
@@ -79,6 +107,7 @@ def run_shell(
             session_id=session_id,
             cancel_hook=cancel_hook,
             tool_use_id=tool_use_id,
+            cwd=dir,
         )
     
     # --- Local path: direct execution with trust service ---
@@ -91,6 +120,7 @@ def run_shell(
             "reason": reason,
             "command": command_display,
             "session_id": session_id,
+            "dir": dir,
         })
         
         if approval == "reject":
@@ -101,7 +131,7 @@ def run_shell(
         return approval
     
     # Command is already trusted - execute with streaming
-    return _execute_command_streaming(program, args, on_output=on_output, cancel_hook=cancel_hook)
+    return _execute_command_streaming(program, args, on_output=on_output, cancel_hook=cancel_hook, cwd=dir)
 
 
 def _execute_via_client(
@@ -113,6 +143,7 @@ def _execute_via_client(
     session_id: str,
     cancel_hook: Optional[Any] = None,
     tool_use_id: str | None = None,
+    cwd: Optional[str] = None,
 ) -> str:
     """Execute a command via the ACP client terminal interface.
     
@@ -147,7 +178,7 @@ def _execute_via_client(
             session_id=session_id,
             command=program,
             args=args if args else None,
-            cwd=None,
+            cwd=cwd,
         ))
         
         terminal_id = info.terminal_id
@@ -175,7 +206,7 @@ def _execute_via_client(
         return f"Error executing command: {str(e)}"
 
 
-def _execute_command(program: str, args: list[str]) -> str:
+def _execute_command(program: str, args: list[str], cwd: Optional[str] = None) -> str:
     """
     Execute a shell command and return output (non-streaming).
     """
@@ -185,7 +216,7 @@ def _execute_command(program: str, args: list[str]) -> str:
             capture_output=True,
             text=True,
             timeout=300,
-            cwd=None
+            cwd=cwd
         )
         
         output = ""
@@ -214,12 +245,13 @@ def _execute_command_streaming(
     args: list[str],
     on_output: Optional[Callable[[str], None]] = None,
     cancel_hook: Optional[Any] = None,
+    cwd: Optional[str] = None,
 ) -> str:
     """
     Execute a shell command with streaming output.
     """
     if on_output is None:
-        return _execute_command(program, args)
+        return _execute_command(program, args, cwd=cwd)
     
     try:
         process = subprocess.Popen(
@@ -227,7 +259,7 @@ def _execute_command_streaming(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            cwd=None,
+            cwd=cwd,
         )
         
         output_lines: list[str] = []
@@ -281,6 +313,7 @@ async def async_execute_command(
     args: list[str],
     on_output: Optional[Callable[[str], None]] = None,
     cancel_hook: Optional[Any] = None,
+    cwd: Optional[str] = None,
 ) -> str:
     """
     Execute a shell command asynchronously without blocking the event loop.
@@ -290,6 +323,7 @@ async def async_execute_command(
             program, *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            cwd=cwd,
         )
         
         output_lines: list[str] = []

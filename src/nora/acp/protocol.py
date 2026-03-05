@@ -29,7 +29,7 @@ from nora.acp.jsonrpc import (
 from nora.acp.models.error import AcpError, ErrorCode
 from nora.acp.models.message import AcpMessage
 from nora.acp.models.run import AgentMode, Run
-from nora.acp.models.session import Session
+from nora.acp.models.session import Session, TokenUsage
 from nora.repositories.run_repository import RunRepository
 from nora.repositories.session_repository import SessionRepository
 from nora.services.agent_service import AgentService, CancellationHook
@@ -600,7 +600,7 @@ class ProtocolHandler:
             if cancel_hook.cancelled:
                 logger.info("Run cancelled during execution: session=%s", session_id_str)
                 run.confirm_cancel()
-                self._save_run(session, run, agent, messages_before_run, output_chunks)
+                self._save_run(session, run, agent, messages_before_run, output_chunks, result=None)
                 return "cancelled"
             logger.error("Agent execution failed: session=%s, error=%s", session_id_str, e, exc_info=True)
             run.fail(
@@ -611,7 +611,7 @@ class ProtocolHandler:
         if cancel_hook.cancelled or result is None:
             logger.info("Run cancelled (post-execution): session=%s", session_id_str)
             run.confirm_cancel()
-            self._save_run(session, run, agent, messages_before_run, output_chunks)
+            self._save_run(session, run, agent, messages_before_run, output_chunks, result=result)
             return "cancelled"
 
         # Complete the run
@@ -643,7 +643,7 @@ class ProtocolHandler:
                 },
             }))
 
-        self._save_run(session, run, agent, messages_before_run, output_chunks)
+        self._save_run(session, run, agent, messages_before_run, output_chunks, result=result)
         return "end_turn"
 
     def _save_run(
@@ -653,10 +653,16 @@ class ProtocolHandler:
         agent: Any,
         messages_before_run: int,
         output_chunks: list[str],
+        result: Any = None,
     ) -> None:
-        """Persist run data and update session."""
+        """Persist run data, update token usage, and save session."""
         new_messages = list(agent.messages[messages_before_run:])
         self._run_repo.save(run, new_messages)
+
+        # Extract and persist token usage
+        token_usage = self._extract_token_usage(result)
+        if token_usage.input_tokens > 0:
+            session.metadata.token_usage = token_usage
 
         session.metadata.updated_at = datetime.now()
         if not session.metadata.name or session.metadata.name.startswith("Session "):
@@ -666,6 +672,42 @@ class ProtocolHandler:
                     session.generate_name(text)
                     break
         self._session_repo.save(session)
+
+    @staticmethod
+    def _extract_token_usage(result: Any) -> TokenUsage:
+        """Extract token usage from a Strands AgentResult.
+
+        Tries the last cycle of the latest invocation first (most accurate
+        context size), falls back to accumulated_usage.
+
+        Args:
+            result: AgentResult from agent() call (can be None).
+
+        Returns:
+            TokenUsage with extracted values.
+        """
+        input_tokens = 0
+        output_tokens = 0
+        total_tokens = 0
+
+        if result is not None and hasattr(result, "metrics"):
+            metrics = result.metrics
+            inv = metrics.latest_agent_invocation
+            if inv and inv.cycles:
+                last_cycle = inv.cycles[-1]
+                input_tokens = last_cycle.usage.get("inputTokens", 0)
+                output_tokens = last_cycle.usage.get("outputTokens", 0)
+                total_tokens = last_cycle.usage.get("totalTokens", 0)
+            elif metrics.accumulated_usage:
+                input_tokens = metrics.accumulated_usage.get("inputTokens", 0)
+                output_tokens = metrics.accumulated_usage.get("outputTokens", 0)
+                total_tokens = metrics.accumulated_usage.get("totalTokens", 0)
+
+        return TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        )
 
 
 # ------------------------------------------------------------------

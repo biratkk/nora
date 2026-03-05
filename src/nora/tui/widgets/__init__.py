@@ -8,6 +8,7 @@ from nora.tui.widgets.confirmation import ToolConfirmModal
 from nora.tui.widgets.modal import BaseModal
 from nora.tui.widgets.model_modal import ModelSelectorModal
 from nora.tui.widgets.switch_modal import SwitchModal
+from nora.tui.widgets.context_bar import ContextBar
 from nora.screens.diff_modal import DiffModal
 
-__all__ = ["ChatMessage", "ToolCallBlock", "ToolIndicator", "SubagentBlock", "ShellBlock", "ShellMessage", "DiffBlock", "AutocompleteWidget", "AutocompleteItem", "LoadingWidget", "MarkdownInput", "ToolConfirmModal", "BaseModal", "ModelSelectorModal", "DiffModal", "SwitchModal"]
+__all__ = ["ChatMessage", "ToolCallBlock", "ToolIndicator", "SubagentBlock", "ShellBlock", "ShellMessage", "DiffBlock", "AutocompleteWidget", "AutocompleteItem", "LoadingWidget", "MarkdownInput", "ToolConfirmModal", "BaseModal", "ModelSelectorModal", "DiffModal", "SwitchModal", "ContextBar"]

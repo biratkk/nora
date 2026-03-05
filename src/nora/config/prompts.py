@@ -117,9 +117,10 @@ User: "Refactor the database module to use connection pooling"
 - NEVER use command substitution ($() or backticks)
 - One command at a time - call Shell multiple times if needed
 - Shell takes `program` and `args` separately, plus `reason`
+- Use `dir` when the command must run in a specific directory. Relative or absolute paths accepted.
 - Example: Shell(program="git", args=["status"], reason="Checking current git status")
 - Example: Shell(program="pytest", args=["tests/"], reason="Running test suite")
-- Example: Shell(program="npm", args=["install"], reason="Installing dependencies")
+- Example: Shell(program="npm", args=["install"], dir="/path/to/frontend", reason="Installing frontend deps")
 
 ## Responses
 - Answer questions directly

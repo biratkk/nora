@@ -6,6 +6,7 @@ from nora.tui.widgets.autocomplete import AutocompleteWidget, AutocompleteItem
 from nora.tui.widgets.loading import LoadingWidget
 from nora.tui.widgets.input import MarkdownInput
 from nora.tui.widgets.modal import BaseModal
+from nora.tui.widgets.context_bar import ContextBar
 
 __all__ = [
     "ChatMessage",
@@ -20,4 +21,5 @@ __all__ = [
     "LoadingWidget",
     "MarkdownInput",
     "BaseModal",
+    "ContextBar",
 ]
