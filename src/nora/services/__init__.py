@@ -8,6 +8,7 @@ from nora.services.agent_service import AgentService, CancellationHook
 from nora.services.trust_service import TrustService, TrustDecision, TrustLevel
 from nora.services.session_service import SessionService
 from nora.services.run_service import RunService
+from nora.services.mcp_service import McpService
 
 __all__ = [
     "SettingsService",
@@ -21,4 +22,5 @@ __all__ = [
     "TrustLevel",
     "SessionService",
     "RunService",
+    "McpService",
 ]

@@ -29,9 +29,9 @@ def list_threads():
     return list_sessions()
 
 
-def save_plan(source_id: str, content: str) -> Plan:
+def save_plan(name: str, content: str) -> "Plan":
     """Save a plan to disk."""
-    return _plan_service._repository.save(source_id, content)
+    return _plan_service.create(name, content)
 
 
 def load_plugins():

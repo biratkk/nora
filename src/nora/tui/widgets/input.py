@@ -137,10 +137,6 @@ class MarkdownInput(TextArea):
             event.prevent_default()
             event.stop()
             self.app.action_cycle_mode()
-        elif event.key == "ctrl+e":
-            event.prevent_default()
-            event.stop()
-            self.app.action_execute_plan()
         elif event.key == "ctrl+l":
             event.prevent_default()
             event.stop()

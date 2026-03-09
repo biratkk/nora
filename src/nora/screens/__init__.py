@@ -7,6 +7,8 @@ from nora.tui.widgets.model_modal import ModelSelectorModal
 from nora.tui.widgets.switch_modal import SwitchModal
 from nora.screens.shell_approval_modal import ShellApprovalModal
 from nora.screens.trust_level_modal import TrustLevelModal
+from nora.tui.widgets.mcp_tool_selection_modal import McpToolSelectionModal
+from nora.tui.widgets.mcp_manager_modal import McpServerListModal, McpServerDetailModal
 
 __all__ = [
     "ToolConfirmModal",
@@ -15,4 +17,7 @@ __all__ = [
     "SwitchModal",
     "ShellApprovalModal",
     "TrustLevelModal",
+    "McpToolSelectionModal",
+    "McpServerListModal",
+    "McpServerDetailModal",
 ]

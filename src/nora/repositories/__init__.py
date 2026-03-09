@@ -7,6 +7,7 @@ from nora.repositories.plan_repository import PlanRepository
 from nora.repositories.trust_repository import TrustRepository
 from nora.repositories.session_repository import SessionRepository
 from nora.repositories.run_repository import RunRepository
+from nora.repositories.mcp_repository import McpRepository
 
 __all__ = [
     "SettingsRepository",
@@ -16,4 +17,5 @@ __all__ = [
     "TrustRepository",
     "SessionRepository",
     "RunRepository",
+    "McpRepository",
 ]

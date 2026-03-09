@@ -1,12 +1,10 @@
 """Repository for plan persistence."""
 
-from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 
 from nora.config.constants import NORA_DIR_NAME, PLANS_DIR_NAME
 from nora.models.plan import Plan
-from nora.utils.text import generate_plan_description
 
 
 class PlanRepository:
@@ -14,6 +12,8 @@ class PlanRepository:
     Handles persistence of plans to disk.
     
     Plans are stored as markdown files in $CWD/.nora/plans/.
+    New plans use 3-word hyphenated names (e.g., 'auth-session-refactor.md').
+    Legacy timestamp-based plans are still readable.
     """
     
     def __init__(self, base_dir: Optional[Path] = None) -> None:
@@ -36,14 +36,12 @@ class PlanRepository:
         """Ensure the plans directory exists."""
         self._plans_dir.mkdir(parents=True, exist_ok=True)
     
-    def save(self, thread_id: str, content: str) -> Plan:
+    def save(self, name: str, content: str) -> Plan:
         """
         Save a plan to disk.
         
-        Generates a timestamp-based ID and description from content.
-        
         Args:
-            thread_id: The source thread ID.
+            name: The plan name (e.g., 'auth-session-refactor').
             content: The plan content in markdown.
             
         Returns:
@@ -51,47 +49,52 @@ class PlanRepository:
         """
         self._ensure_dirs()
         
-        plan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        description = generate_plan_description(content)
-        
-        plan = Plan(
-            id=plan_id,
-            description=description,
-            content=content,
-            created=datetime.now(),
-            thread_id=thread_id
-        )
-        
+        plan = Plan(name=name, content=content)
         path = self._plans_dir / plan.get_filename()
         path.write_text(content)
         
         return plan
     
-    def load(self, plan_id: str) -> Optional[Plan]:
+    def exists(self, name: str) -> bool:
         """
-        Load a plan by ID.
+        Check if a plan exists.
         
         Args:
-            plan_id: The plan ID to load.
+            name: The plan name.
+            
+        Returns:
+            True if the plan file exists.
+        """
+        return (self._plans_dir / f"{name}.md").exists()
+    
+    def load(self, name: str) -> Optional[Plan]:
+        """
+        Load a plan by name.
+        
+        Supports both new-style 3-word names and legacy timestamp-based names.
+        
+        Args:
+            name: The plan name to load.
             
         Returns:
             Plan instance or None if not found.
         """
-        if not self._plans_dir.exists():
-            return None
-        
-        for path in self._plans_dir.glob(f"{plan_id}-*.md"):
+        # Try exact match first
+        path = self._plans_dir / f"{name}.md"
+        if path.exists():
             content = path.read_text()
-            filename = path.stem
-            description = filename.replace(f"{plan_id}-", "")
-            
-            return Plan(
-                id=plan_id,
-                description=description,
-                content=content,
-                created=datetime.fromtimestamp(path.stat().st_ctime),
-                thread_id=""
-            )
+            return Plan(name=name, content=content)
+        
+        # Try legacy glob (timestamp prefix match)
+        if self._plans_dir.exists():
+            for legacy_path in self._plans_dir.glob(f"{name}*.md"):
+                content = legacy_path.read_text()
+                return Plan(
+                    name=legacy_path.stem,
+                    content=content,
+                    id=name,
+                    description=legacy_path.stem.replace(f"{name}-", ""),
+                )
         
         return None
     
@@ -108,20 +111,7 @@ class PlanRepository:
         plans: List[Plan] = []
         
         for path in sorted(self._plans_dir.glob("*.md"), reverse=True):
-            filename = path.stem
-            parts = filename.split("-", 1)
-            if len(parts) != 2:
-                continue
-            
-            plan_id, description = parts
             content = path.read_text()
-            
-            plans.append(Plan(
-                id=plan_id,
-                description=description,
-                content=content,
-                created=datetime.fromtimestamp(path.stat().st_ctime),
-                thread_id=""
-            ))
+            plans.append(Plan(name=path.stem, content=content))
         
         return plans

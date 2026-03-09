@@ -10,6 +10,7 @@ THREADS_DIR_NAME: Final[str] = "threads"
 SESSIONS_DIR_NAME: Final[str] = "sessions"
 PLANS_DIR_NAME: Final[str] = "plans"
 PLUGINS_DIR_NAME: Final[str] = "plugins"
+MCPS_FILENAME: Final[str] = "mcps.json"
 
 # Default model
 DEFAULT_MODEL_ID: Final[str] = "us.anthropic.claude-opus-4-6-v1"
@@ -45,7 +46,7 @@ MODE_COLORS: Final[dict[str, str]] = {
 MODE_CYCLE: Final[list[str]] = ["vibe", "plan", "edit"]
 
 # Autocomplete
-COMMANDS: Final[list[str]] = ["/new", "/switch", "/model", "/exit"]
+COMMANDS: Final[list[str]] = ["/new", "/switch", "/model", "/exit", "/add-local-mcp", "/add-global-mcp", "/mcp"]
 MAX_AUTOCOMPLETE_RESULTS: Final[int] = 10
 
 # File handling

@@ -11,6 +11,9 @@ def generate_plan_description(content: str, max_length: int = 20) -> str:
     """
     Generate a short description from plan content.
     
+    .. deprecated::
+        Use ``nora.tools.plan.generate_plan_name()`` instead for LLM-based naming.
+    
     Extracts the first line, removes non-alphanumeric characters,
     and joins the first few words with hyphens.
     

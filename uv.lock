@@ -452,6 +452,7 @@ source = { editable = "." }
 dependencies = [
     { name = "docstring-parser" },
     { name = "fastapi" },
+    { name = "mcp" },
     { name = "pathspec" },
     { name = "pyyaml" },
     { name = "rapidfuzz" },
@@ -469,6 +470,7 @@ dependencies = [
 requires-dist = [
     { name = "docstring-parser", specifier = ">=0.17.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "mcp", specifier = ">=1.0.0" },
     { name = "pathspec", specifier = ">=0.12.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "rapidfuzz", specifier = ">=3.5.0" },

@@ -25,6 +25,8 @@ from nora.services.agent_service import AgentService, CancellationHook
 from nora.widgets import ChatMessage, ToolCallBlock, ToolIndicator, SubagentBlock, ShellBlock, ShellMessage, DiffBlock, AutocompleteWidget, LoadingWidget, MarkdownInput, ContextBar, AskContainer
 from nora.screens import ToolConfirmModal, ModelSelectorModal, DiffModal, SwitchModal, ShellApprovalModal, TrustLevelModal
 from nora.services.trust_service import TrustService, TrustDecision
+from nora.services.mcp_service import McpService
+from nora.tui.widgets.mcp_manager_modal import McpServerListModal
 from nora.tools.shell import async_execute_command, async_execute_shell_command
 
 logger = logging.getLogger(__name__)
@@ -93,8 +95,8 @@ class ChatApp(App):
         self._session_service = SessionService()
         self._run_service = RunService()
         self._plugin_service = PluginService()
-        self._plan_service = PlanService()
         self._agent_service = AgentService()
+        self._mcp_service = McpService()
         
         # State
         self.agent = None
@@ -108,6 +110,7 @@ class ChatApp(App):
         self._cancel_hook = CancellationHook()
         self._active_invocation: Optional[_ActiveInvocation] = None
         self._subagent_expanded = False
+        self._pending_execute_plan: Optional[str] = None
 
     def compose(self) -> ComposeResult:
         with Container(id="main"):
@@ -211,6 +214,8 @@ class ChatApp(App):
                 block.toggle_collapsed()
 
     def on_mount(self) -> None:
+        # Load MCP clients before creating the agent
+        self._agent_service.load_mcp_clients()
         self._init_agent()
         # Set initial input container border color
         input_container = self.query_one("#input-container", Container)
@@ -229,6 +234,10 @@ class ChatApp(App):
         chat.scroll_end(animate=False)
         self.query_one("#input", MarkdownInput).focus()
         self.query_one("#autocomplete", AutocompleteWidget).cache_files()
+
+    def on_unmount(self) -> None:
+        """Clean up MCP clients on app exit to avoid 'Cannot close a running event loop' errors."""
+        self._agent_service.cleanup_mcp_clients()
 
     def _render_session_history(self, chat: VerticalScroll) -> None:
         """Render all messages from session runs into the chat widget."""
@@ -361,23 +370,6 @@ class ChatApp(App):
         self._update_status_bar()
         self._init_agent()
 
-    def action_execute_plan(self) -> None:
-        if self._agent_mode != "plan":
-            return
-        plan_content = self._session_service.get_last_assistant_text(self.session)
-        if not plan_content:
-            return
-        plan = self._plan_service.save_and_link_session(self.session, plan_content)
-        self._agent_mode = "edit"
-        self._update_status_bar()
-        self._init_agent()
-        self._session_service.save(self.session)
-        self._set_processing(True)
-        self._current_worker = self.run_worker(
-            self._send_message(self._plan_service.get_implementation_prompt(plan)), 
-            exclusive=True
-        )
-
     async def _send_message(self, text: str) -> None:
         chat = self.query_one("#chat", VerticalScroll)
         chat.mount(ChatMessage("user", text))
@@ -402,9 +394,14 @@ class ChatApp(App):
 
         # Command autocomplete
         if text.startswith("/"):
-            ac.show(ac.get_command_matches(text))
-            self._ac_trigger = "/"
-            self._ac_pos = 0
+            matches = ac.get_command_matches(text)
+            if matches:
+                ac.show(matches)
+                self._ac_trigger = "/"
+                self._ac_pos = 0
+            else:
+                self._ac_trigger = None
+                ac.hide()
             return
 
         # File autocomplete
@@ -431,6 +428,12 @@ class ChatApp(App):
             ac.move_selection(1)
             event.prevent_default()
             event.stop()
+        elif event.key == "tab":
+            item = ac.get_selected()
+            if item:
+                self._apply_selection(item.value, submit=False)
+                event.prevent_default()
+                event.stop()
         elif event.key == "enter":
             item = ac.get_selected()
             if item:
@@ -443,13 +446,17 @@ class ChatApp(App):
             event.prevent_default()
             event.stop()
 
-    def _apply_selection(self, value: str) -> None:
+    def _apply_selection(self, value: str, submit: bool = True) -> None:
         inp = self.query_one("#input", MarkdownInput)
         ac = self.query_one("#autocomplete", AutocompleteWidget)
 
         if self._ac_trigger == "/":
-            inp.set_internal(value, len(value))
-            inp.post_message(inp.Submitted(inp, value))
+            if submit:
+                inp.set_internal(value, len(value))
+                inp.post_message(inp.Submitted(inp, value))
+            else:
+                filled = value + " "
+                inp.set_internal(filled, len(filled))
         elif self._ac_trigger == "@":
             text = inp.internal_value
             before = text[:self._ac_pos]
@@ -500,6 +507,15 @@ class ChatApp(App):
             return
         if text == "/switch":
             self.push_screen(SwitchModal(), self._on_session_selected)
+            return
+        if text.startswith("/add-local-mcp "):
+            self.run_worker(self._handle_add_mcp(text[len("/add-local-mcp "):], "local"))
+            return
+        if text.startswith("/add-global-mcp "):
+            self.run_worker(self._handle_add_mcp(text[len("/add-global-mcp "):], "global"))
+            return
+        if text == "/mcp":
+            self.push_screen(McpServerListModal(agent_service=self._agent_service), self._on_mcp_modal_closed)
             return
 
         # Match plugins based on fuzzy keyword matching
@@ -868,10 +884,26 @@ class ChatApp(App):
             self.session.generate_name(prompt)
         self._session_service.save(self.session)
         self._active_invocation = None
+        
+        # Handle deferred plan execution (from ExecutePlan tool interrupt)
+        if self._pending_execute_plan and not cancelled and not rejected:
+            plan_name = self._pending_execute_plan
+            self._pending_execute_plan = None
+            self._agent_mode = "edit"
+            self._update_status_bar()
+            self._init_agent()
+            self._session_service.save(self.session)
+            await self._send_message(PlanService.get_implementation_prompt(plan_name))
+            return
+        
+        self._pending_execute_plan = None
         self._set_processing(False)
 
     async def _get_confirmation(self, name: str, reason: dict) -> str:
         """Show confirmation modal and return user response."""
+        if name == "execute-plan":
+            self._pending_execute_plan = reason["plan_name"]
+            return f"Switching to edit mode to execute plan: {reason['plan_name']}"
         if name == "diff-confirm":
             return await self.push_screen_wait(DiffModal(reason["path"], reason["old"], reason["new"], reason["reason"]))
         if name == "shell-confirm":
@@ -934,6 +966,102 @@ class ChatApp(App):
 
         return result
     
+    async def _handle_add_mcp(self, command_args: str, scope: str) -> None:
+        """Handle /add-local-mcp or /add-global-mcp command.
+
+        Flow: parse command → prompt for name → save default config → open detail modal.
+
+        Args:
+            command_args: The command and args string (e.g. "npx -y chrome-devtools-mcp@latest").
+            scope: "local" or "global".
+        """
+        parts = command_args.strip().split()
+        if not parts:
+            return
+        command = parts[0]
+        args = parts[1:]
+
+        chat = self.query_one("#chat", VerticalScroll)
+
+        # Step 1: Prompt for server name
+        name = await self._prompt_mcp_name(scope)
+        if name is None:
+            chat.mount(ChatMessage("assistant", "MCP server setup cancelled."))
+            chat.scroll_end()
+            return
+
+        # Step 2: Save default config and reload agent so the server is live
+        from nora.models.mcp_config import McpServerConfig
+        from nora.tui.widgets.mcp_manager_modal import McpServerDetailModal
+
+        config = McpServerConfig(command=command, args=args)
+        self._mcp_service.add_server(name, config, scope)
+        self._agent_service.reload_mcp_clients()
+        self._init_agent()
+
+        # Step 3: Discover tools (from live agent or fresh)
+        chat_container = self.query_one("#chat-container", Container)
+        loading = LoadingWidget(message="Connecting to MCP server", style="bar", color="cyan")
+        chat_container.mount(loading)
+        chat.scroll_end()
+
+        tools: list[dict] = []
+        loop = asyncio.get_event_loop()
+        try:
+            tools = self._agent_service.get_mcp_tools_for_server(name)
+            if not tools and config.command:
+                tools = await loop.run_in_executor(
+                    None, lambda: self._mcp_service.discover_tools(command, args)
+                )
+        except Exception:
+            pass
+        finally:
+            try:
+                loading.remove()
+            except Exception:
+                pass
+
+        # Step 4: Open detail modal for configuration
+        detail = McpServerDetailModal(name, config, scope, tools)
+        result = await self.push_screen_wait(detail)
+
+        if result is not None:
+            updated_config, updated_scope = result
+            self._mcp_service.update_server(name, updated_config, updated_scope)
+
+        # Step 5: Reinitialize agent with final config
+        self._agent_service.reload_mcp_clients()
+        self._init_agent()
+
+        tool_count = len(tools) - len((result[0].disabledTools if result else []))
+        chat.mount(ChatMessage(
+            "assistant",
+            f"MCP server **{name}** added ({scope}) with {tool_count} tool(s) enabled.",
+        ))
+        chat.scroll_end()
+
+    async def _prompt_mcp_name(self, scope: str) -> Optional[str]:
+        """Show a modal to prompt for an MCP server name.
+
+        Args:
+            scope: "local" or "global" — for collision checking.
+
+        Returns:
+            The chosen name, or None if cancelled.
+        """
+        from nora.tui.widgets.mcp_name_modal import McpNameModal
+
+        return await self.push_screen_wait(
+            McpNameModal(scope, self._mcp_service.server_name_exists)
+        )
+
+    def _on_mcp_modal_closed(self, changed: bool) -> None:
+        """Callback when /mcp management modal is closed."""
+        if changed:
+            self._agent_service.reload_mcp_clients()
+            self._init_agent()
+        self.query_one("#input", MarkdownInput).focus()
+
     async def _handle_shell_confirmation(self, reason: dict) -> str:
         """
         Handle shell command approval with trust policy flow.

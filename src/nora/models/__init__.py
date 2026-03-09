@@ -13,6 +13,7 @@ from nora.models.plan import Plan
 from nora.models.settings import Settings
 from nora.models.autocomplete import AutocompleteItem
 from nora.models.trust_policy import TrustPolicyFile, Policy
+from nora.models.mcp_config import McpServerConfig, McpConfigFile
 
 # ACP models (new)
 from nora.acp.models import (
@@ -46,4 +47,7 @@ __all__ = [
     "Session",
     "SessionMetadata",
     "AcpError",
+    # MCP
+    "McpServerConfig",
+    "McpConfigFile",
 ]

@@ -8,6 +8,8 @@ from nora.tui.widgets.input import MarkdownInput
 from nora.tui.widgets.modal import BaseModal
 from nora.tui.widgets.context_bar import ContextBar
 from nora.tui.widgets.ask_container import AskContainer
+from nora.tui.widgets.mcp_tool_selection_modal import McpToolSelectionModal
+from nora.tui.widgets.mcp_manager_modal import McpServerListModal, McpServerDetailModal
 
 __all__ = [
     "ChatMessage",
@@ -24,4 +26,7 @@ __all__ = [
     "BaseModal",
     "ContextBar",
     "AskContainer",
+    "McpToolSelectionModal",
+    "McpServerListModal",
+    "McpServerDetailModal",
 ]

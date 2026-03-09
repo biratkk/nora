@@ -144,6 +144,7 @@ from nora.services import (
     PlanService,        # Plan operations
     AgentService,       # Agent creation
     CancellationHook,   # Cancellation
+    McpService,         # MCP server management
 )
 ```
 
@@ -261,6 +262,8 @@ The diff modal shows: **filepath** `·` reason (middle dot separator).
 - Threads (legacy): `$CWD/.nora/threads/`
 - Plugins: `$CWD/.nora/plugins/`
 - Plans: `$CWD/.nora/plans/`
+- MCP (local): `$CWD/.nora/mcp.json`
+- MCP (global): `~/.nora/mcp.json`
 
 ## Caching
 
@@ -369,9 +372,72 @@ from nora.core import create_agent, CancellationHook
 from nora.storage import save_thread, load_thread
 ```
 
+## MCP (Model Context Protocol) Integration
+
+Nora supports MCP servers for extending the agent's tool capabilities.
+
+### Architecture
+
+```
+McpService → McpRepository → mcp.json (local/global)
+AgentService → MCPClient (strands-agents) → MCP Server (stdio subprocess)
+```
+
+### Configuration
+
+MCP servers are configured via JSON files:
+
+- **Local** (project-scoped): `$CWD/.nora/mcp.json`
+- **Global** (user-scoped): `~/.nora/mcp.json`
+
+```json
+{
+  "mcpServers": {
+    "server-name": {
+      "command": "npx",
+      "args": ["-y", "some-mcp-server@latest"],
+      "env": {},
+      "disabledTools": ["tool_to_skip"]
+    }
+  }
+}
+```
+
+Both scopes are merged at runtime (local overrides global on name collision).
+
+### Slash Commands
+
+| Command | Description |
+|---------|-------------|
+| `/add-local-mcp <cmd> [args...]` | Add MCP server to local config |
+| `/add-global-mcp <cmd> [args...]` | Add MCP server to global config |
+| `/mcp` | Open MCP server management modal |
+
+### Flow: Adding an MCP Server
+
+1. User types `/add-local-mcp npx -y some-server`
+2. Prompt for server name (inline input)
+3. Start MCP server temporarily to discover tools
+4. Show tool selection modal (checkboxes)
+5. Save config → reload MCP clients → reinit agent
+
+### Key Classes
+
+- `McpServerConfig` — Pydantic model for server config
+- `McpConfigFile` — Top-level config file with `mcpServers` dict
+- `McpRepository` — CRUD for local/global mcp.json files
+- `McpService` — Business logic (merge, discover, add/remove/update)
+- `McpToolSelectionModal` — Textual modal for toggling tools
+- `McpServerListModal` / `McpServerDetailModal` — Management UI
+
+### Agent Integration
+
+`AgentService._create_mcp_clients()` reads merged MCP config and creates `MCPClient` instances (from `strands.tools.mcp`). These are passed to `Agent(tools=[...mcp_clients])`. `reload_mcp_clients()` refreshes them when config changes.
+
 ## References
 
 - Strands: https://strandsagents.com/latest/documentation/docs/
 - Bedrock: https://strandsagents.com/latest/documentation/docs/user-guide/concepts/model-providers/amazon-bedrock/
 - Agent Client Protocol: https://agentclientprotocol.com
 - ACP GitHub: https://github.com/agentclientprotocol/agent-client-protocol
+- MCP: https://modelcontextprotocol.io

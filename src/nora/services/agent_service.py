@@ -1,5 +1,7 @@
 """Service for AI agent management."""
 
+import logging
+from pathlib import Path
 from typing import Any, Optional, List
 
 import boto3
@@ -10,6 +12,8 @@ from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
 from nora.config.constants import DEFAULT_MODEL_ID, AVAILABLE_MODELS
 from nora.models.thread import Thread
 from nora.services.settings_service import SettingsService
+
+logger = logging.getLogger(__name__)
 
 
 class CancellationHook(HookProvider):
@@ -69,6 +73,7 @@ class AgentService:
         """
         self._settings_service = settings_service or SettingsService.get_instance()
         self._tool_sets: Optional[dict[str, List]] = None
+        self._mcp_clients: list = []
     
     def create_agent(
         self,
@@ -95,6 +100,10 @@ class AgentService:
         model = self._create_model(effective_model_id, profile)
         system_prompt = self._get_system_prompt(mode)
         tools = self._get_tools_for_mode(mode)
+        
+        # Merge MCP clients into tool list (except for subagent mode)
+        if mode != "subagent" and self._mcp_clients:
+            tools = tools + self._mcp_clients
         
         return Agent(
             model=model,
@@ -179,9 +188,29 @@ class AgentService:
         
         return BedrockModel(**kwargs)
     
+    @staticmethod
+    def _load_agent_file() -> Optional[str]:
+        """
+        Load AGENTS.md or AGENT.md from the current working directory.
+        
+        Checks for AGENTS.md first, then AGENT.md. Returns the file
+        contents or None if neither exists.
+        """
+        cwd = Path.cwd()
+        for filename in ("AGENTS.md", "AGENT.md"):
+            path = cwd / filename
+            if path.is_file():
+                try:
+                    return path.read_text(encoding="utf-8")
+                except OSError:
+                    return None
+        return None
+    
     def _get_system_prompt(self, mode: str) -> Optional[str]:
         """
         Get the system prompt for a mode.
+        
+        Appends project instructions from AGENTS.md or AGENT.md if present.
         
         Args:
             mode: Agent mode.
@@ -189,7 +218,13 @@ class AgentService:
         Returns:
             System prompt string.
         """
-        return self._settings_service.get_mode_prompt(mode)
+        prompt = self._settings_service.get_mode_prompt(mode)
+        agent_file = self._load_agent_file()
+        if agent_file and prompt:
+            prompt = prompt + "\n\n## Project Instructions (from AGENTS.md)\n\n" + agent_file
+        elif agent_file:
+            prompt = agent_file
+        return prompt
     
     def _get_tools_for_mode(self, mode: str) -> List:
         """
@@ -209,6 +244,7 @@ class AgentService:
                 read_file, write_file, edit_file, explore_dir, 
                 search_files, run_subagent, fetch_url, run_shell,
                 read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin,
+                create_plan, read_plan, execute_plan,
                 ask_user,
             )
             from nora.tools.shell import update_shell_tool_cwd
@@ -218,18 +254,103 @@ class AgentService:
             
             plugin_tools = [read_plugin, write_plugin, edit_plugin, delete_plugin, search_plugin]
             readonly_tools = [read_file, explore_dir, search_files, fetch_url]
-            plan_tools = readonly_tools + [run_subagent, ask_user] + plugin_tools
-            full_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url, run_shell, ask_user] + plugin_tools
+            
+            # Plan mode: readonly + subagent + ask + create/read/execute plan + plugins
+            plan_tools = readonly_tools + [run_subagent, ask_user, create_plan, read_plan, execute_plan] + plugin_tools
+            
+            # Vibe mode: full tools + create/read plan (no execute)
+            vibe_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url, run_shell, ask_user, create_plan, read_plan] + plugin_tools
+            
+            # Edit/act mode: full tools + read plan only (no create/execute)
+            edit_tools = [read_file, write_file, edit_file, explore_dir, search_files, run_subagent, fetch_url, run_shell, ask_user, read_plan] + plugin_tools
+            
+            # Subagent: readonly + read plan
+            subagent_tools = readonly_tools + [read_plan]
             
             self._tool_sets = {
-                "subagent": readonly_tools,
+                "subagent": subagent_tools,
                 "plan": plan_tools,
-                "vibe": full_tools,
-                "edit": full_tools,
-                "act": full_tools,
+                "vibe": vibe_tools,
+                "edit": edit_tools,
+                "act": edit_tools,
             }
         
         return self._tool_sets.get(mode, self._tool_sets["vibe"])
+    
+    def load_mcp_clients(self) -> None:
+        """Load MCP clients from local and global config files.
+        
+        Creates MCPClient instances for all enabled servers using the
+        managed approach (lifecycle handled by Strands).
+        """
+        try:
+            from nora.services.mcp_service import McpService
+            mcp_service = McpService()
+            self._mcp_clients = mcp_service.get_mcp_clients()
+            if self._mcp_clients:
+                logger.info("Loaded %d MCP client(s)", len(self._mcp_clients))
+        except Exception:
+            logger.warning("Failed to load MCP clients", exc_info=True)
+            self._mcp_clients = []
+    
+    def reload_mcp_clients(self) -> None:
+        """Reload MCP clients (e.g. after adding/modifying servers)."""
+        self.cleanup_mcp_clients()
+        self.load_mcp_clients()
+
+    def cleanup_mcp_clients(self) -> None:
+        """Stop all running MCP clients gracefully.
+
+        Calls stop() on each client that has an active background thread,
+        then clears the list. This prevents 'Cannot close a running event loop'
+        errors that occur when Agent.__del__ tries to clean up during GC.
+        """
+        for client in self._mcp_clients:
+            try:
+                if hasattr(client, '_tool_provider_started') and client._tool_provider_started:
+                    client.stop(None, None, None)
+                    client._tool_provider_started = False
+                    client._loaded_tools = None
+                    client._consumers = set()
+            except Exception:
+                logger.debug("Failed to stop MCP client cleanly", exc_info=True)
+        self._mcp_clients = []
+
+    def get_mcp_tools_for_server(self, server_name: str) -> list[dict]:
+        """Get tool list from a running MCP client by server name.
+
+        Uses cached tools from the client if available, otherwise queries the server.
+        Tool names are returned **without** the server prefix to match config format
+        (disabledTools/trustedTools use unprefixed names).
+        Returns empty list if the server is not loaded or has no tools.
+        """
+        for client in self._mcp_clients:
+            if getattr(client, "_prefix", None) == server_name:
+                try:
+                    prefix = f"{server_name}_"
+                    # Prefer cached tools (already loaded during agent init)
+                    cached = getattr(client, "_loaded_tools", None)
+                    if cached is not None:
+                        return [
+                            {
+                                "name": t.tool_name.removeprefix(prefix),
+                                "description": t.tool_spec.get("description", "No description found."),
+                            }
+                            for t in cached
+                        ]
+                    # Fall back to querying the running server
+                    tools = client.list_tools_sync()
+                    return [
+                        {
+                            "name": t.tool_name.removeprefix(prefix),
+                            "description": t.tool_spec.get("description", "No description found."),
+                        }
+                        for t in tools
+                    ]
+                except Exception:
+                    logger.warning("Failed to list tools for MCP server '%s'", server_name, exc_info=True)
+                    return []
+        return []
     
     @staticmethod
     def get_model_name(model_id: Optional[str] = None) -> str:

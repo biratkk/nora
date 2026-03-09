@@ -10,6 +10,9 @@ from nora.tui.widgets.model_modal import ModelSelectorModal
 from nora.tui.widgets.switch_modal import SwitchModal
 from nora.tui.widgets.context_bar import ContextBar
 from nora.tui.widgets.ask_container import AskContainer
+from nora.tui.widgets.mcp_tool_selection_modal import McpToolSelectionModal
+from nora.tui.widgets.mcp_manager_modal import McpServerListModal, McpServerDetailModal
+from nora.tui.widgets.mcp_name_modal import McpNameModal
 from nora.screens.diff_modal import DiffModal
 
-__all__ = ["ChatMessage", "ToolCallBlock", "ToolIndicator", "SubagentBlock", "ShellBlock", "ShellMessage", "DiffBlock", "AutocompleteWidget", "AutocompleteItem", "LoadingWidget", "MarkdownInput", "ToolConfirmModal", "BaseModal", "ModelSelectorModal", "DiffModal", "SwitchModal", "ContextBar", "AskContainer"]
+__all__ = ["ChatMessage", "ToolCallBlock", "ToolIndicator", "SubagentBlock", "ShellBlock", "ShellMessage", "DiffBlock", "AutocompleteWidget", "AutocompleteItem", "LoadingWidget", "MarkdownInput", "ToolConfirmModal", "BaseModal", "ModelSelectorModal", "DiffModal", "SwitchModal", "ContextBar", "AskContainer", "McpToolSelectionModal", "McpServerListModal", "McpServerDetailModal", "McpNameModal"]

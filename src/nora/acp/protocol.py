@@ -589,13 +589,34 @@ class ProtocolHandler:
 
         # Run agent in executor
 
-        def run_agent() -> Any:
+        def run_agent(input_data: Any = None) -> Any:
             if cancel_hook.cancelled:
                 return None
-            return agent(prompt_text, invocation_state=invocation_state)
+            if input_data is None:
+                return agent(prompt_text, invocation_state=invocation_state)
+            return agent(input_data, invocation_state=invocation_state)
 
         try:
             result = await loop.run_in_executor(None, run_agent)
+            
+            # Handle interrupts
+            if result is not None:
+                while result.stop_reason == "interrupt" and not cancel_hook.cancelled:
+                    responses = []
+                    for interrupt in result.interrupts:
+                        responses.append({
+                            "interruptResponse": {
+                                "interruptId": interrupt.id,
+                                "response": "acknowledged",
+                            }
+                        })
+                    
+                    if not cancel_hook.cancelled:
+                        result = await loop.run_in_executor(None, lambda: run_agent(responses))
+                        if result is None:
+                            break
+                    else:
+                        break
         except Exception as e:
             if cancel_hook.cancelled:
                 logger.info("Run cancelled during execution: session=%s", session_id_str)
@@ -644,6 +665,7 @@ class ProtocolHandler:
             }))
 
         self._save_run(session, run, agent, messages_before_run, output_chunks, result=result)
+
         return "end_turn"
 
     def _save_run(
